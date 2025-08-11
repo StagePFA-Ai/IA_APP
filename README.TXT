@@ -80,4 +80,4 @@ Licence
 MIT License
 
 Contact
-ton.email@example.com
+email@example.com
