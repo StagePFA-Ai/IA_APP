@@ -1,0 +1,10 @@
+Django>=4.2
+djangorestframework
+gunicorn
+uvicorn
+faster-whisper
+transformers
+sentencepiece
+torch  # si transformers en a besoin; installation CPU ou CUDA selon ton hardware
+uvloop  # optionnel
+python-multipart

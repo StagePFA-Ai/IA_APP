@@ -1,0 +1,173 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- Variables CSS utiles (tailwind fera la majeure partie) --- */
+:root{
+  --primary-50: #eef2ff;
+  --primary-500: #2563eb; /* bleu principal */
+  --accent-500: #10b981;  /* vert */
+  --muted: #6b7280;       /* gris texte */
+  --card-bg: #ffffff;
+  --surface: #f8fafc;
+}
+
+/* --- Global layout --- */
+html,body,#root {
+  height: 100%;
+}
+body {
+  @apply bg-gray-50 text-gray-800 antialiased;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+/* container qui centre le contenu principal */
+.app-container {
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* --- Sidebar --- */
+aside {
+  background: var(--card-bg);
+  border-right: 1px solid rgba(15,23,42,0.04);
+  min-height: 100vh;
+}
+
+/* profil en bas de sidebar */
+.sidebar-profile {
+  @apply flex items-center gap-3 p-4 border-t mt-6;
+}
+.sidebar-profile img {
+  @apply w-10 h-10 rounded-full;
+}
+.sidebar-profile .name {
+  @apply text-sm font-medium;
+}
+.sidebar-profile .role {
+  @apply text-xs text-gray-400;
+}
+
+/* --- Topbar --- */
+.topbar {
+  @apply bg-white border-b px-6 py-3 flex items-center justify-between;
+  z-index: 10;
+}
+
+/* recherche / actions dans topbar */
+.topbar .actions {
+  @apply flex items-center gap-3;
+}
+.topbar .btn {
+  @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium;
+}
+.btn-primary {
+  background: linear-gradient(180deg, #2b6be6, #2563eb);
+  color: white;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.12) inset, 0 6px 20px rgba(37,99,235,0.12);
+}
+.btn-ghost {
+  @apply bg-white border text-gray-700;
+}
+
+/* --- KPI Cards --- */
+.kpi-grid { @apply grid grid-cols-1 md:grid-cols-4 gap-4; }
+.kpi-card {
+  @apply bg-white rounded-lg shadow-sm p-4 flex items-center justify-between;
+  border: 1px solid rgba(15,23,42,0.03);
+}
+.kpi-card .meta { @apply text-sm text-gray-500; }
+.kpi-card .value { @apply text-2xl font-bold; }
+.kpi-card .delta { @apply text-xs font-medium; }
+
+/* badge small */
+.badge {
+  @apply rounded-full px-2 py-0.5 text-xs inline-block font-semibold;
+  background: #eef2ff;
+  color: #2563eb;
+}
+
+/* --- Cards & panels --- */
+.card {
+  @apply bg-white rounded-lg p-4 shadow-sm border;
+  border-color: rgba(15,23,42,0.04);
+}
+
+/* Section titles */
+.section-title { @apply text-lg font-semibold mb-3; }
+
+/* chart containers */
+.chart-wrap { @apply p-2 rounded; }
+
+/* --- Meeting list / Meeting card --- */
+.meeting-card {
+  @apply bg-white p-4 rounded-lg shadow-sm flex justify-between items-start gap-3 border;
+  border-color: rgba(15,23,42,0.04);
+}
+.meeting-card .meta { @apply text-sm text-gray-500; }
+.meeting-actions input[type="file"] {
+  @apply text-sm;
+}
+
+/* small pill status */
+.pill {
+  @apply inline-block px-2 py-0.5 rounded-full text-xs font-medium;
+  background: #f1f5f9; color: #0f172a;
+}
+.pill.processing { background: #fff7ed; color: #b45309; }
+.pill.done { background: #ecfdf5; color: #059669; }
+.pill.failed { background: #fff1f2; color: #be123c; }
+
+/* --- Buttons --- */
+.btn {
+  @apply rounded-md text-sm font-medium inline-flex items-center gap-2;
+}
+.btn-primary {
+  @apply bg-blue-600 text-white px-4 py-2;
+}
+.btn-secondary {
+  @apply bg-white border px-3 py-2 text-gray-700;
+}
+
+/* hover focus states for accessibility */
+button:focus, input:focus, select:focus {
+  @apply outline-none ring-2 ring-blue-200;
+}
+
+/* --- Forms --- */
+.input {
+  @apply border border-gray-200 rounded-md px-3 py-2 w-full text-sm bg-white;
+}
+.input:focus { @apply border-blue-300; }
+
+/* file input styling wrapper */
+.file-input {
+  @apply inline-flex items-center gap-2 border border-dashed border-gray-200 rounded-md px-3 py-2 bg-white;
+}
+
+/* --- Login page --- */
+.login-wrapper {
+  @apply min-h-screen flex items-center justify-center bg-gradient-to-b from-white to-gray-50;
+}
+.login-card {
+  @apply w-full max-w-md bg-white rounded-xl shadow-lg p-6;
+}
+
+/* --- Small utilities --- */
+.small-muted { @apply text-xs text-gray-400; }
+.divider { @apply border-t mt-3 mb-3 border-gray-100; }
+
+/* --- Responsive tweaks --- */
+@media (max-width: 768px) {
+  .app-container { padding: 16px; }
+  aside { display: none; }
+  .topbar { @apply px-4; }
+}
+
+/* --- subtle animations --- */
+.fade-in { animation: fadeIn 0.45s ease both; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity:1; transform: translateY(0); }
+}
