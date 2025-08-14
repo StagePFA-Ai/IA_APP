@@ -43,14 +43,21 @@ export default function Meetings() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Titre réunion" className="border p-2 rounded w-full" />
-        <button onClick={handleCreate} className="bg-blue-600 text-white px-4 py-2 rounded">Nouvelle réunion</button>
+    <div className="meetings-container">
+      <div className="meeting-form">
+        <input 
+          value={title} 
+          onChange={e=>setTitle(e.target.value)} 
+          placeholder="Titre réunion" 
+          className="meeting-input" 
+        />
+        <button onClick={handleCreate} className="create-button">
+          Nouvelle réunion
+        </button>
       </div>
 
-      <div className="space-y-3">
-        {meetings.length === 0 && <div className="text-gray-500">Aucune réunion</div>}
+      <div className="meetings-list">
+        {meetings.length === 0 && <div className="no-meetings">Aucune réunion</div>}
         {meetings.map(m => (
           <MeetingCard
             key={m.id}

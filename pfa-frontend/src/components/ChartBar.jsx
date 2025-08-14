@@ -3,15 +3,15 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 
 export default function ChartBar({ data }) {
   return (
-    <div className="bg-white p-4 rounded shadow">
-      <h3 className="font-semibold mb-2">Réunions par jour</h3>
-      <div style={{ width: "100%", height: 260 }}>
+    <div className="chart-bar-container">
+      <h3 className="chart-title">Réunions par jour</h3>
+      <div className="chart-responsive-container">
         <ResponsiveContainer>
           <BarChart data={data}>
             <XAxis dataKey="name" />
             <YAxis />
             <Tooltip />
-            <Bar dataKey="value" fill="#5176c7ff" />
+            <Bar dataKey="value" fill="#5176c7" />
           </BarChart>
         </ResponsiveContainer>
       </div>

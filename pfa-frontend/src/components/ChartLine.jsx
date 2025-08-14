@@ -3,15 +3,22 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "rec
 
 export default function ChartLine({ data }) {
   return (
-    <div className="bg-white p-4 rounded shadow">
-      <h3 className="font-semibold mb-2">Durée totale (minutes)</h3>
-      <div style={{ width: "100%", height: 200 }}>
-        <ResponsiveContainer>
+    <div className="chart-line-container">
+      <h3 className="chart-line-title">Durée totale (minutes)</h3>
+      <div className="chart-line-responsive-container">
+        <ResponsiveContainer className="chart-line">
           <LineChart data={data}>
             <XAxis dataKey="name" />
             <YAxis />
             <Tooltip />
-            <Line type="monotone" dataKey="value" stroke="#41b991ff" strokeWidth={2} />
+            <Line 
+              type="monotone" 
+              dataKey="value" 
+              stroke="#41b991" 
+              strokeWidth={2} 
+              dot={{ fill: '#41b991', strokeWidth: 2, r: 4 }}
+              activeDot={{ fill: '#2f855a', strokeWidth: 0, r: 6 }}
+            />
           </LineChart>
         </ResponsiveContainer>
       </div>

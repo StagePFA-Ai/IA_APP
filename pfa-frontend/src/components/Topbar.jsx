@@ -1,19 +1,24 @@
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
-export default function Topbar({ onNewMeeting }) {
+export default function Topbar() {
+  const navigate = useNavigate();
+
   return (
-    <header className="bg-white border-b p-4 flex justify-between items-center">
-      <div className="flex items-center gap-4">
-        <button className="md:hidden" onClick={()=>{}}>
-          ☰
-        </button>
-        <h1 className="text-lg font-semibold">Tableau de Bord</h1>
+    <header className="topbar">
+      <div className="topbar-left">
+        <button className="menu-button">☰</button>
+        <h1 className="topbar-title">BIENVENUE</h1>
       </div>
 
-      <div className="flex items-center gap-3">
-        <button onClick={onNewMeeting} className="bg-blue-600 text-white px-3 py-1 rounded">Nouvelle Réunion</button>
-        <Link to="/settings" className="text-sm text-gray-600">Profil</Link>
+      <div className="topbar-right">
+        <button
+          onClick={() => navigate("/nouvelle-reunion")}
+          className="new-meeting-button"
+        >
+          Nouvelle Réunion
+        </button>
+        <Link to="/settings" className="profile-link">Profil</Link>
       </div>
     </header>
   );

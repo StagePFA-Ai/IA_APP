@@ -1,7 +1,7 @@
 import threading
 import logging
 from .models import Meeting
-from .utils.transcribe_summarize import transcribe_audio, summarize_text
+from .utils.transcsumm import transcribe_audio, summarize_text
 
 def _process_meeting(meeting_id):
     try:

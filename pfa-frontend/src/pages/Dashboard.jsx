@@ -29,25 +29,25 @@ export default function Dashboard() {
   const lineData = [ {name:'S1',value:200},{name:'S2',value:450},{name:'S3',value:320} ];
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+     <div className="dashboard">
+      <div className="kpi-grid">
         {kpis.map((k,i) => <KpiCard key={i} {...k} />)}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-4">
+      <div className="content-grid">
+        <div className="main-column">
           <ChartBar data={barData} />
           <ChartLine data={lineData} />
         </div>
-        <div className="space-y-4">
-          <div className="bg-white p-4 rounded shadow">
-            <h3 className="font-semibold mb-2">Actions Rapides</h3>
-            <button className="bg-blue-50 text-blue-700 px-3 py-1 rounded mr-2">Rapport mensuel</button>
-            <button className="bg-gray-50 px-3 py-1 rounded">Exporter</button>
+        <div className="side-column">
+          <div className="card">
+            <h3 className="section-title">Actions Rapides</h3>
+            <button className="btn btn-primary">Rapport mensuel</button>
+            <button className="btn btn-secondary">Exporter</button>
           </div>
-          <div className="bg-white p-4 rounded shadow">
-            <h3 className="font-semibold mb-2">Activité</h3>
-            <ul className="text-sm text-gray-600 space-y-1">
+          <div className="card">
+            <h3 className="section-title">Activité</h3>
+            <ul className="activity-list">
               <li>Enregistrement automatique activé</li>
               <li>Notes partagées</li>
               <li>Actions en attente: 3</li>
