@@ -1,0 +1,410 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Calendrier des Réunions</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/main.min.css">
+  <style>
+    body{background:#f5f5f5;display:flex;min-height:100vh}
+    .sidebar{width:250px;background:#1f2a37;color:#fff;padding:20px;display:flex;flex-direction:column}
+    .sidebar-nav a{display:block;color:#fff;padding:10px 15px;margin-bottom:5px;text-decoration:none;border-radius:4px}
+    .sidebar-nav a.active,.sidebar-nav a:hover{background:#3498db}
+    .main-content{flex:1;display:flex;flex-direction:column}
+    .topbar{background:#fff;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+    .content-container{padding:20px;flex:1}
+    .calendar-page{display:flex;gap:20px;height:calc(100vh - 180px)}
+    .calendar-card{background:#fff;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1);padding:20px;flex:1;overflow:auto}
+    #calendar{height:100%}
+    .meeting-card{background:#f8f9fa;border-radius:6px;padding:15px;margin-bottom:15px;border-left:4px solid #3498db}
+    .meeting-actions .btn{margin-right:.4rem;margin-top:.5rem}
+    @media (max-width: 992px){.calendar-page{flex-direction:column;height:auto}}
+  </style>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title h5 m-0">MeetingAI</div>
+      <div class="sidebar-subtitle small">Résumés intelligents</div>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="{% url 'dashboard' %}">Tableau de bord</a>
+      <a href="/meetings">Réunions</a>
+      <a href="{% url 'calendar' %}" class="active">Calendrier</a>
+      <a href="/settings">Paramètres</a>
+    </nav>
+    <div class="sidebar-footer mt-auto small opacity-75">© {% now "Y" %} Local</div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main-content">
+    <header class="topbar">
+      <h1 class="h5 m-0">CALENDRIER DES RÉUNIONS</h1>
+      <button class="btn btn-primary" id="btnOpenModal">Nouvelle Réunion</button>
+    </header>
+
+    <div class="content-container">
+      <div class="calendar-page">
+        <div class="calendar-card">
+          <div id="calendar"></div>
+        </div>
+
+        <!-- Colonne dynamique (aujourd’hui par défaut côté serveur) -->
+        <div class="calendar-card">
+          <h3 class="h6">Réunions le <span id="dayTitle">{{ selected_date|date:"l j F Y" }}</span></h3>
+          <div id="dayList">
+            {% if meetings_on_date %}
+              {% for m in meetings_on_date %}
+                <div class="meeting-card" data-id="{{ m.id }}">
+                  <div class="fw-bold">{{ m.titre }}</div>
+                  <div class="text-muted small">{{ m.date_r|date:"d/m/Y" }} · {{ m.heure_r|time:"H:i" }}</div>
+                  <span class="badge bg-secondary mt-1">{{ m.get_status_display }}</span>
+                  <div class="meeting-actions">
+                    <button class="btn btn-sm btn-outline-primary btn-manage"
+                            data-id="{{ m.id }}"
+                            data-title="{{ m.titre }}"
+                            data-date="{{ m.date_r|date:'Y-m-d' }}"
+                            data-time="{{ m.heure_r|time:'H:i' }}">
+                      Gérer
+                    </button>
+                    <a class="btn btn-sm btn-outline-dark" href="{% url 'view_meeting' m.id %}">Voir</a>
+                    {% if m.status == 'planifier' %}
+                      <button class="btn btn-sm btn-success btn-start"
+                              data-id="{{ m.id }}"
+                              data-title="{{ m.titre }}"
+                              data-date="{{ m.date_r|date:'Y-m-d' }}"
+                              data-time="{{ m.heure_r|time:'H:i' }}">
+                        Démarrer
+                      </button>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endfor %}
+            {% else %}
+              <div class="text-muted">Aucune réunion prévue</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: créer réunion -->
+  <div class="modal fade" id="modalCreate" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <form class="modal-content" id="formCreate" method="post" action="{% url 'calendar_create' %}">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title">Planifier une réunion</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Titre</label>
+            <input type="text" class="form-control" name="titre" required>
+          </div>
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label">Date</label>
+              <input type="date" class="form-control" name="date" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label">Heure</label>
+              <input type="time" class="form-control" name="heure" required>
+            </div>
+          </div>
+          <div class="form-text mt-2">La réunion sera créée avec le statut <strong>Planifié</strong>.</div>
+          <div class="alert alert-danger d-none mt-3" id="createError"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn btn-primary">Créer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: gérer / démarrer -->
+  <div class="modal fade" id="modalManage" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <form class="modal-content" id="formManage" method="post" action="{% url 'calendar_meeting_update' %}">
+        {% csrf_token %}
+        <input type="hidden" name="id" id="mg_id">
+
+        <div class="modal-header">
+          <h5 class="modal-title">Détails de la réunion</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Titre</label>
+            <input type="text" class="form-control" id="mg_title" name="titre" readonly>
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label">Date</label>
+              <input type="date" class="form-control" id="mg_date" name="date" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label">Heure</label>
+              <input type="time" class="form-control" id="mg_time" name="heure" required>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label">Participants</label>
+            <select id="mg_participants" name="participants" class="form-select" multiple size="8"></select>
+            <div class="form-text">Seul le créateur peut modifier les participants.</div>
+          </div>
+
+          <div class="alert alert-danger d-none mt-3" id="manageError"></div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Fermer</button>
+          <button type="submit" class="btn btn-outline-primary" id="btnSaveManage">Enregistrer</button>
+          <button type="button" class="btn btn-success" id="btnStartFromManage">Démarrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/main.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/locales/fr.min.js"></script>
+  <script>
+    // ------ CSRF
+    function getCookie(name){ const v=`; ${document.cookie}`.split(`; ${name}=`); if(v.length===2) return v.pop().split(';').shift(); }
+    const csrftoken = getCookie('csrftoken');
+
+    // ------ Rendu colonne du jour
+    function renderDayList(payload){
+      const dayList  = document.getElementById('dayList');
+      const dayTitle = document.getElementById('dayTitle');
+      dayTitle.textContent = new Date(payload.date).toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+
+      if(!payload.meetings?.length){
+        dayList.innerHTML = '<div class="text-muted">Aucune réunion prévue</div>';
+        return;
+      }
+      dayList.innerHTML = payload.meetings.map(m => `
+        <div class="meeting-card" data-id="${m.id}">
+          <div class="fw-bold">${m.titre}</div>
+          <div class="text-muted small">${new Date(m.date).toLocaleDateString('fr-FR')} · ${m.heure}</div>
+          <span class="badge bg-secondary mt-1">${m.status_label}</span>
+          <div class="meeting-actions">
+            <button class="btn btn-sm btn-outline-primary btn-manage"
+                    data-id="${m.id}"
+                    data-title="${m.titre.replace(/"/g,'&quot;')}"
+                    data-date="${m.date}"
+                    data-time="${m.heure}">
+              Gérer
+            </button>
+            <a class="btn btn-sm btn-outline-dark" href="/meetings/${m.id}/view/">Voir</a>
+            ${m.status === 'planifier' ? `
+              <button class="btn btn-sm btn-success btn-start"
+                      data-id="${m.id}"
+                      data-title="${m.titre.replace(/"/g,'&quot;')}"
+                      data-date="${m.date}"
+                      data-time="${m.heure}">
+                Démarrer
+              </button>` : ``}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function loadDay(dateStr){
+      const url = new URL("{% url 'calendar_day' %}", window.location.origin);
+      url.searchParams.set('date', dateStr);
+      const r = await fetch(url, {headers:{'X-Requested-With':'XMLHttpRequest'}});
+      if(r.ok){ renderDayList(await r.json()); }
+    }
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      // ------ FullCalendar
+      const calendarEl = document.getElementById('calendar');
+      const calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        locale: 'fr',
+        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },
+        events: "{% url 'calendar_events' %}",
+        dateClick: function(info) {
+          loadDay(info.dateStr); // met à jour la colonne de droite
+        },
+        eventClick: function(info) {
+          info.jsEvent.preventDefault();
+          if (info.event.url) window.location.href = info.event.url;
+        }
+      });
+      calendar.render();
+      window.calendar = calendar; // (facultatif) pour refetchEvents ailleurs
+
+      // ------ Initialiser la colonne avec la date du contexte (aujourd’hui par défaut côté serveur)
+      await loadDay("{{ selected_date|date:'Y-m-d' }}");
+
+      // ------ Modale création
+      const modalCreate  = new bootstrap.Modal(document.getElementById('modalCreate'));
+      const formCreate   = document.getElementById('formCreate');
+      const createError  = document.getElementById('createError');
+
+      document.getElementById('btnOpenModal').addEventListener('click', () => {
+        formCreate.reset();
+        formCreate.date.value = new Date().toISOString().slice(0,10);
+        formCreate.heure.value = '09:00';
+        createError.classList.add('d-none');
+        modalCreate.show();
+      });
+
+      formCreate.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        createError.classList.add('d-none');
+        const formData = new FormData(formCreate);
+        try {
+          const resp = await fetch(formCreate.action, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrftoken },
+            body: formData
+          });
+          if (!resp.ok) throw new Error(await resp.text() || 'Erreur inconnue');
+          const data = await resp.json();
+          if (data.ok) {
+            modalCreate.hide();
+            calendar.refetchEvents();        // recharge le calendrier
+            await loadDay(formData.get('date')); // rafraîchit la colonne
+          } else {
+            throw new Error(data.error || 'Erreur inconnue');
+          }
+        } catch (err) {
+          createError.textContent = err.message;
+          createError.classList.remove('d-none');
+        }
+      });
+
+      // ------ Modale gérer / démarrer
+      const modalManage   = new bootstrap.Modal(document.getElementById('modalManage'));
+      const formManage    = document.getElementById('formManage');
+      const manageError   = document.getElementById('manageError');
+      const mgId          = document.getElementById('mg_id');
+      const mgTitle       = document.getElementById('mg_title');
+      const mgDate        = document.getElementById('mg_date');
+      const mgTime        = document.getElementById('mg_time');
+      const mgParticipants= document.getElementById('mg_participants');
+      const btnStartFromManage = document.getElementById('btnStartFromManage');
+
+      // ouvrir la modale "Gérer"
+      document.getElementById('dayList').addEventListener('click', async (e) => {
+        const btn = e.target.closest('.btn-manage');
+        if(!btn) return;
+
+        manageError.classList.add('d-none');
+
+        const id = btn.dataset.id;
+        // astuce: URL template avec pk=0 puis replace
+        const infoUrlTpl = "{% url 'calendar_meeting_info' 0 %}";
+        const infoUrl = infoUrlTpl.replace('/0/', `/${id}/`);
+
+        const r = await fetch(infoUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if(!r.ok){ manageError.textContent = 'Impossible de charger la réunion.'; manageError.classList.remove('d-none'); return; }
+        const data = await r.json();
+
+        mgId.value    = data.id;
+        mgTitle.value = data.titre;
+        mgDate.value  = data.date;
+        mgTime.value  = data.heure;
+
+        mgParticipants.innerHTML = '';
+        data.participants_all.forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.id;
+          opt.textContent = u.label;
+          if (u.selected) opt.selected = true;
+          mgParticipants.appendChild(opt);
+        });
+
+        modalManage.show();
+      });
+
+      // enregistrer (date/heure/participants)
+      formManage.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        manageError.classList.add('d-none');
+
+        const formData = new FormData(formManage);
+        const selected = Array.from(mgParticipants.selectedOptions).map(o => o.value);
+        formData.delete('participants');
+        selected.forEach(v => formData.append('participants', v));
+
+        try{
+          const r = await fetch(formManage.action, { method:'POST', headers:{'X-CSRFToken': csrftoken}, body: formData });
+          if(!r.ok) throw new Error(await r.text() || 'Erreur inconnue');
+          const data = await r.json();
+          if(!data.ok) throw new Error(data.error || 'Enregistrement impossible');
+          await loadDay(mgDate.value);
+          calendar.refetchEvents?.();
+          modalManage.hide();
+        }catch(err){
+          manageError.textContent = err.message;
+          manageError.classList.remove('d-none');
+        }
+      });
+
+      // démarrer depuis la modale "Gérer"
+      btnStartFromManage.addEventListener('click', async () => {
+        manageError.classList.add('d-none');
+        const payload = new FormData();
+        payload.append('id', mgId.value);
+        payload.append('date', mgDate.value);
+        payload.append('heure', mgTime.value);
+
+        try{
+          const r = await fetch("{% url 'calendar_start' %}", { method:'POST', headers:{'X-CSRFToken': csrftoken}, body: payload });
+          if(!r.ok) throw new Error(await r.text() || 'Erreur inconnue');
+          const data = await r.json();
+          if(data.ok && data.redirect){
+            window.location.href = data.redirect; // page transcription
+          }else{
+            throw new Error(data.error || 'Impossible de démarrer');
+          }
+        }catch(err){
+          manageError.textContent = err.message;
+          manageError.classList.remove('d-none');
+        }
+      });
+
+      // bouton "Démarrer" direct (sur carte)
+      document.getElementById('dayList').addEventListener('click', async (e)=>{
+        const btn = e.target.closest('.btn-start');
+        if(!btn) return;
+        // On remplit la modale avec les données de la carte et on clique Démarrer
+        document.getElementById('mg_id').value   = btn.dataset.id;
+        document.getElementById('mg_title').value= btn.dataset.title;
+        document.getElementById('mg_date').value = btn.dataset.date;
+        document.getElementById('mg_time').value = btn.dataset.time;
+        // participants: on recharge via info pour cohérence
+        const infoUrlTpl = "{% url 'calendar_meeting_info' 0 %}";
+        const infoUrl = infoUrlTpl.replace('/0/', `/${btn.dataset.id}/`);
+        const r = await fetch(infoUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if(r.ok){
+          const data = await r.json();
+          mgParticipants.innerHTML = '';
+          data.participants_all.forEach(u => {
+            const opt = document.createElement('option');
+            opt.value = u.id;
+            opt.textContent = u.label;
+            if (u.selected) opt.selected = true;
+            mgParticipants.appendChild(opt);
+          });
+        }
+        new bootstrap.Modal(document.getElementById('modalManage')).show();
+      });
+    });
+  </script>
+</body>
+</html>

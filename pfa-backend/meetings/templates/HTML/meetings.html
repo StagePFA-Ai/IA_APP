@@ -1,0 +1,227 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mes réunions · MeetingAI</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+  <style>
+    body{background:#f5f5f7;min-height:100vh;display:flex}
+    .sidebar{width:260px;background:#1f2a37;color:#fff;display:flex;flex-direction:column;padding:20px}
+    .sidebar .brand{font-weight:700;font-size:1.3rem;margin-bottom:6px}
+    .sidebar .muted{opacity:.75;font-size:.9rem;margin-bottom:22px}
+    .sidebar a{color:#e5e7eb;text-decoration:none;padding:10px 12px;border-radius:8px;display:block;margin-bottom:6px}
+    .sidebar a.active,.sidebar a:hover{background:#2563eb;color:#fff}
+    .main{flex:1;display:flex;flex-direction:column}
+    .topbar{background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+    .content{padding:22px}
+    .card-meeting{border:0;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+    .badge-status{font-size:.75rem}
+    .meta{color:#6b7280;font-size:.9rem}
+    .actions .btn{margin-right:.4rem;margin-bottom:.4rem}
+    .truncate{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
+    .chip{display:inline-block;padding:.2rem .5rem;border-radius:999px;background:#eef2ff;color:#1e40af;font-size:.75rem;margin-right:.25rem;margin-bottom:.25rem}
+  </style>
+</head>
+<body>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">MeetingAI</div>
+    <div class="muted">Résumés intelligents</div>
+    <nav>
+      <a href="{% url 'dashboard' %}">Tableau de bord</a>
+      <a href="{% url 'meetings' %}" class="active">Réunions</a>
+      <a href="{% url 'calendar' %}">Calendrier</a>
+      <a href="/settings">Paramètres</a>
+    </nav>
+    <div class="mt-auto small text-white-50">© {% now "Y" %} Local</div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary d-md-none" id="toggleSidebar">☰</button>
+        <h1 class="h5 m-0">Mes réunions</h1>
+      </div>
+      
+    </header>
+
+    <!-- CONTENT -->
+    <main class="content container-fluid">
+      {% if messages %}
+        <div class="mb-3">
+          {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} mb-2">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <!-- Recherche / Filtres -->
+      <form class="card card-meeting p-3 mb-3" method="get">
+        <div class="row g-2">
+          <div class="col-12 col-md-4">
+            <input type="text" class="form-control" name="q" placeholder="Rechercher (titre, transcription, résumé)" value="{{ q }}">
+          </div>
+          <div class="col-6 col-md-2">
+            <select name="status" class="form-select">
+              <option value="">Tous statuts</option>
+              <option value="planifier" {% if status == "planifier" %}selected{% endif %}>Planifié</option>
+              <option value="en_cours" {% if status == "en_cours" %}selected{% endif %}>En cours</option>
+              <option value="terminer" {% if status == "terminer" %}selected{% endif %}>Terminé</option>
+              <option value="annuler" {% if status == "annuler" %}selected{% endif %}>Annulé</option>
+              <option value="reporter" {% if status == "reporter" %}selected{% endif %}>Reporté</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-2">
+            <input type="date" class="form-control" name="date_from" value="{{ date_from }}">
+          </div>
+          <div class="col-6 col-md-2">
+            <input type="date" class="form-control" name="date_to" value="{{ date_to }}">
+          </div>
+          <div class="col-6 col-md-2 d-flex gap-2">
+            <button class="btn btn-primary w-100" type="submit">Filtrer</button>
+            <a class="btn btn-light w-100" href="{% url 'meetings' %}">Réinitialiser</a>
+          </div>
+        </div>
+      </form>
+
+      {% if meetings %}
+        <div class="row g-3">
+          {% for m in meetings %}
+          <div class="col-12 col-lg-6">
+            <div class="card card-meeting p-3">
+              <div class="d-flex align-items-start justify-content-between">
+                <div>
+                  <h3 class="h6 m-0">{{ m.titre }}</h3>
+                  <div class="meta">{{ m.date_r|date:"d/m/Y" }} · {{ m.heure_r|time:"H:i" }}</div>
+                  {% if m.participants.all %}
+                    <div class="mt-1">
+                      {% for u in m.participants.all %}
+                        <span class="chip">{{ u.get_full_name|default:u.username }}</span>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                </div>
+                <span class="badge bg-secondary badge-status">{{ m.get_status_display }}</span>
+              </div>
+
+              {% if m.audios.all %}
+                <div class="mt-3">
+                  <div class="small text-muted mb-1">Audios</div>
+                  <ul class="list-unstyled mb-0">
+                    {% for a in m.audios.all %}
+                      <li>
+                        {% if a.chemin_fichier %}
+                          <a href="{{ a.chemin_fichier.url }}" target="_blank">
+                            {{ a.chemin_fichier.name|cut:"uploads/audio/" }}
+                          </a>
+                        {% else %}
+                          <span class="text-muted">Fichier manquant</span>
+                        {% endif %}
+                        <span class="text-muted">· {{ a.format|upper }} · {{ a.duree }}s</span>
+                      </li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+
+              {% if m.transcription %}
+                <div class="mt-3">
+                  <div class="small text-muted mb-1">Transcription</div>
+                  <div class="truncate">{{ m.transcription.text_transcrit }}</div>
+                </div>
+                {% if m.transcription.resume %}
+                  <div class="mt-3">
+                    <div class="small text-muted mb-1">Résumé</div>
+                    <div class="truncate">{{ m.transcription.resume.text_resume }}</div>
+                    {% if m.transcription.resume.rapport %}
+                      <div class="mt-1">
+                        <a class="btn btn-sm btn-outline-dark" href="{{ m.transcription.resume.rapport.fichier.url }}" target="_blank">Télécharger le rapport</a>
+                      </div>
+                    {% endif %}
+                  </div>
+                {% endif %}
+              {% else %}
+                <div class="mt-3 alert alert-warning py-2 mb-2">
+                  Aucune transcription pour l’instant.
+                </div>
+              {% endif %}
+
+              <!-- Actions -->
+              <div class="actions mt-3">
+                
+
+               
+                <a href="{% url 'view_meeting' m.id %}" class="btn btn-outline-dark btn-sm">Voir</a>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <!-- Pagination -->
+        {% if page_obj and page_obj.paginator.num_pages > 1 %}
+        <nav class="mt-3">
+          <ul class="pagination pagination-sm">
+            {% if page_obj.has_previous %}
+              <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}&q={{ q }}&status={{ status }}&date_from={{ date_from }}&date_to={{ date_to }}">Précédent</a>
+              </li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Précédent</span></li>
+            {% endif %}
+
+            <li class="page-item disabled">
+              <span class="page-link">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+            </li>
+
+            {% if page_obj.has_next %}
+              <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}&q={{ q }}&status={{ status }}&date_from={{ date_from }}&date_to={{ date_to }}">Suivant</a>
+              </li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Suivant</span></li>
+            {% endif %}
+          </ul>
+        </nav>
+        {% endif %}
+
+      {% else %}
+        <div class="text-muted">Aucune réunion</div>
+      {% endif %}
+    </main>
+  </div>
+
+  <!-- MODAL: créer réunion -->
+  
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Toggle sidebar
+    document.getElementById('toggleSidebar')?.addEventListener('click', () => {
+      const s = document.querySelector('.sidebar');
+      s.style.display = (s.style.display === 'none' ? 'flex' : 'none');
+    });
+
+    // Modal create
+    const modal = new bootstrap.Modal(document.getElementById('modalCreate'));
+    document.getElementById('btnOpenModal').addEventListener('click', () => {
+      const form = document.querySelector('#formCreate');
+      form.reset();
+      // Pré-remplir date/heure par défaut
+      const today = new Date();
+      form.date_r.value = today.toISOString().slice(0,10);
+      const hh = String(today.getHours()).padStart(2,'0');
+      const mm = String(Math.max(0, today.getMinutes()+5)).padStart(2,'0');
+      form.heure_r.value = `${hh}:${mm}`;
+      modal.show();
+    });
+  </script>
+</body>
+</html>

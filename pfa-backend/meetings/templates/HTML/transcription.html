@@ -1,0 +1,354 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Transcription · MeetingAI</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    body{background:#f5f5f7;min-height:100vh;display:flex}
+    .sidebar{width:260px;background:#1f2a37;color:#fff;display:flex;flex-direction:column;padding:20px}
+    .sidebar .brand{font-weight:700;font-size:1.3rem;margin-bottom:6px}
+    .sidebar .muted{opacity:.75;font-size:.9rem;margin-bottom:22px}
+    .sidebar a{color:#e5e7eb;text-decoration:none;padding:10px 12px;border-radius:8px;display:block;margin-bottom:6px}
+    .sidebar a.active,.sidebar a:hover{background:#2563eb;color:#fff}
+    .main{flex:1;display:flex;flex-direction:column}
+    .topbar{background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+    .content{padding:22px}
+    .cardx{border:0;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+    .pane{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+    .pane h5{margin:0 0 8px 0}
+    .log{white-space:pre-wrap;min-height:140px;max-height:360px;overflow:auto;border-radius:10px;border:1px solid #eee;padding:12px;background:#fafafa}
+    .bigbtn{min-width:180px}
+    .pill{padding:.25rem .6rem;border-radius:999px;font-size:.8rem}
+    .pill-live{background:#fee2e2;color:#991b1b}
+    .pill-idle{background:#e5e7eb;color:#374151}
+    .counter{font-variant:tabular-nums}
+  </style>
+</head>
+<body>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">MeetingAI</div>
+    <div class="muted">Résumés intelligents</div>
+    <nav>
+      <a href="{% url 'dashboard' %}">Tableau de bord</a>
+      <a href="{% url 'meetings' %}">Réunions</a>
+      <a href="{% url 'calendar' %}">Calendrier</a>
+      <a href="{% url 'settings' %}">Paramètres</a>
+      
+    </nav>
+    <div class="mt-auto small text-white-50">© {% now "Y" %} Local</div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <header class="topbar">
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary d-md-none" id="toggleSidebar">☰</button>
+        <h1 class="h5 m-0">
+          {{ reunion.titre }} · {{ reunion.date_r|date:"d/m/Y" }} {{ reunion.heure_r|time:"H:i" }}
+        </h1>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'view_meeting' reunion.id %}">Détails</a>
+        <a class="btn btn-outline-dark btn-sm" href="javascript:history.back()">Retour</a>
+      </div>
+    </header>
+
+    <main class="content container-fluid">
+      {% if messages %}
+        <div class="mb-3">
+          {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} mb-2">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <div class="row g-3">
+        <!-- Panneau contrôle -->
+        <div class="col-12 col-lg-4">
+          <div class="pane p-3">
+            <h5>Contrôle</h5>
+            <div class="d-flex align-items-center justify-content-between">
+              <span id="badgeState" class="pill pill-idle">Au repos</span>
+              <span class="text-muted small">Durée : <span id="timer" class="counter">00:00</span></span>
+            </div>
+
+            <div class="mt-3 d-grid gap-2">
+              <button id="btnToggle" class="btn btn-primary bigbtn">🎤 Démarrer</button>
+              <div class="d-flex gap-2">
+                <select id="lang" class="form-select">
+                  <option value="fr" selected>Français</option>
+                  <option value="en">English</option>
+                  <option value="ar">العربية</option>
+                </select>
+                <input id="maxMins" type="number" class="form-control" placeholder="Durée max (min)" min="1">
+              </div>
+              <div class="d-grid gap-2">
+                <button id="btnSumm" class="btn btn-outline-primary" disabled>📝 Résumer</button>
+                <button id="btnSave" class="btn btn-outline-dark" disabled>💾 Enregistrer</button>
+                <button id="btnClear" class="btn btn-light">Effacer l’affichage</button>
+              </div>
+              <div id="info" class="text-muted small"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panneau transcription -->
+        <div class="col-12 col-lg-4">
+          <div class="pane p-3">
+            <div class="d-flex align-items-center justify-content-between">
+              <h5>Transcription (live)</h5>
+              <span class="text-muted small">{{ reunion.get_status_display }}</span>
+            </div>
+            <div id="transcription" class="log">
+              {% if transcription %}
+                {{ transcription.text_transcrit }}
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Panneau résumé -->
+        <div class="col-12 col-lg-4">
+          <div class="pane p-3">
+            <h5>Résumé</h5>
+            <div id="summary" class="log">
+              {% if resume %}
+                {{ resume.text_resume }}
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <a class="btn btn-outline-dark btn-sm" href="{% url 'generate_report' reunion.id %}">
+  📄 Générer le rapport
+  </a>
+  </div>
+
+  <script>
+    // ---------- util ----------
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+
+    function fmtTime(sec) {
+      const m = Math.floor(sec / 60).toString().padStart(2, '0');
+      const s = Math.floor(sec % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    // ---------- éléments ----------
+    const btnToggle = document.getElementById('btnToggle');
+    const btnSumm   = document.getElementById('btnSumm');
+    const btnSave   = document.getElementById('btnSave');
+    const btnClear  = document.getElementById('btnClear');
+    const badge     = document.getElementById('badgeState');
+    const timerEl   = document.getElementById('timer');
+    const infoEl    = document.getElementById('info');
+    const transDiv  = document.getElementById('transcription');
+    const sumDiv    = document.getElementById('summary');
+    const langSel   = document.getElementById('lang');
+    const maxMins   = document.getElementById('maxMins');
+
+    // ---------- état ----------
+    let ws = null;
+    let stream = null;
+    let rec = null;
+    let running = false;
+    let t0 = 0;
+    let tick = null;
+    let autoStopTimer = null;
+    let accumulatedText = [];  // pour sauver à la fin
+
+    const WS_URL = "{{ webrtc_ws_url|default:'/ws/transcription/' }}"; // défini dans ta vue
+
+    function setState(on) {
+      running = on;
+      if (on) {
+        badge.textContent = "Enregistrement…";
+        badge.classList.remove('pill-idle');
+        badge.classList.add('pill-live');
+        btnToggle.textContent = "⏹️ Arrêter";
+        btnSumm.disabled = true; // on ne résume qu'après stop
+        btnSave.disabled = true;
+      } else {
+        badge.textContent = "Au repos";
+        badge.classList.remove('pill-live');
+        badge.classList.add('pill-idle');
+        btnToggle.textContent = "🎤 Démarrer";
+        btnSumm.disabled = false; // autorise le résumé
+        btnSave.disabled = false; // autorise la sauvegarde
+      }
+    }
+
+    function logInfo(s) {
+      infoEl.textContent = s || "";
+    }
+
+    function appendTrans(line) {
+      if (!line) return;
+      accumulatedText.push(line);
+      transDiv.textContent += (transDiv.textContent ? "\n" : "") + "🗣️ " + line;
+      transDiv.scrollTop = transDiv.scrollHeight;
+    }
+
+    function setSummary(text) {
+      sumDiv.textContent = text || "";
+      sumDiv.scrollTop = sumDiv.scrollHeight;
+    }
+
+    async function start() {
+      try {
+        // 1) WebSocket
+        if (!ws || ws.readyState === WebSocket.CLOSED) {
+          ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + WS_URL);
+          ws.binaryType = "arraybuffer";
+          ws.onmessage = (e) => {
+            try {
+              const data = JSON.parse(e.data);
+              if (data.type === "transcription") appendTrans(data.message);
+              else if (data.type === "summary")   setSummary(data.message);
+              else if (data.type === "info")      transDiv.textContent += (transDiv.textContent ? "\n" : "") + data.message;
+            } catch(_) {}
+          };
+          await new Promise(res => ws.onopen = res);
+        }
+
+        // 2) Micro
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false }
+        });
+
+        // 3) MediaRecorder -> envoie des blobs 1s en ArrayBuffer
+        rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+        rec.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+            e.data.arrayBuffer().then(buf => ws.send(buf));
+          }
+        };
+        rec.start(1000);
+
+        // 4) action start
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: "start" }));
+        }
+
+        // 5) UI
+        transDiv.textContent += (transDiv.textContent ? "\n" : "") + "🎤 Transcription démarrée…";
+        t0 = Date.now();
+        timerEl.textContent = "00:00";
+        clearInterval(tick);
+        tick = setInterval(() => {
+          const sec = (Date.now() - t0) / 1000;
+          timerEl.textContent = fmtTime(sec);
+        }, 250);
+
+        // Auto-stop si durée max définie
+        clearTimeout(autoStopTimer);
+        const mins = parseInt(maxMins.value || "0", 10);
+        if (mins > 0) {
+          autoStopTimer = setTimeout(stop, mins * 60 * 1000);
+        }
+
+        setState(true);
+        logInfo("");
+
+      } catch (err) {
+        logInfo("Erreur micro/WebSocket : " + (err?.message || err));
+        setState(false);
+      }
+    }
+
+    function stop() {
+      try {
+        if (rec && rec.state !== "inactive") rec.stop();
+      } catch(_) {}
+      try {
+        if (stream) stream.getTracks().forEach(t => t.stop());
+      } catch(_) {}
+      try {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: "stop" }));
+        }
+      } catch(_) {}
+
+      clearInterval(tick);
+      clearTimeout(autoStopTimer);
+      setState(false);
+      transDiv.textContent += (transDiv.textContent ? "\n" : "") + "⏹️ Transcription arrêtée.";
+    }
+
+    function toggle() {
+      if (running) stop();
+      else start();
+    }
+
+    async function summarize() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return logInfo("Socket fermé. Relance l’enregistrement au moins une fois.");
+      }
+      const lang = langSel.value || "fr";
+      ws.send(JSON.stringify({ action: "summarize", lang }));
+      logInfo("Résumé en cours…");
+    }
+
+    async function saveAll() {
+      const text = accumulatedText.join("\n");
+      const summary = sumDiv.textContent.trim();
+      if (!text) return logInfo("Rien à enregistrer.");
+
+      const fd = new FormData();
+      fd.append("text", text);
+      fd.append("summary", summary);
+      fd.append("lang", langSel.value || "fr");
+
+      try {
+        const resp = await fetch("{% url 'save_transcription' reunion.id %}", {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie('csrftoken') },
+          body: fd
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          throw new Error(data.error || "Erreur de sauvegarde.");
+        }
+        logInfo("✅ Transcription enregistrée.");
+      } catch (e) {
+        logInfo("❌ " + (e?.message || e));
+      }
+    }
+
+    function clearDisplay() {
+      transDiv.textContent = "";
+      sumDiv.textContent = "";
+      accumulatedText = [];
+      logInfo("");
+    }
+
+    // ---------- bind ----------
+    document.getElementById('toggleSidebar')?.addEventListener('click', () => {
+      const s = document.querySelector('.sidebar');
+      s.style.display = (s.style.display === 'none' ? 'flex' : 'none');
+    });
+
+    btnToggle.addEventListener('click', toggle);
+    btnSumm  .addEventListener('click', summarize);
+    btnSave  .addEventListener('click', saveAll);
+    btnClear .addEventListener('click', clearDisplay);
+
+    // Si le socket se ferme pendant l'enreg., on remet l'UI à l'arrêt
+    window.addEventListener('beforeunload', () => {
+      try { if (running) stop(); } catch(_){}
+    });
+  </script>
+</body>
+</html>

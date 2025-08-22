@@ -1,0 +1,177 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Connexion · MeetingAI</title>
+  <link rel="icon" href="{% static 'favicon.ico' %}">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --violet-1:#a89ae5;
+      --violet-2:#71a2de;
+      --violet-3:#1f2a37;
+      --night:#0c0a1a;
+      --glass: rgba(255,255,255,.08);
+      --stroke: rgba(255,255,255,.18);
+      --text:#eef2ff;
+      --muted:#c7c9ffcc;
+      --input:#ffffff14;
+      --focus:#c2baf5;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:"Inter",system-ui,Segoe UI,Roboto,Arial,sans-serif;
+      color:var(--text); background: radial-gradient(1200px 600px at 20% -10%, #2b2370 0%, transparent 60%),
+                          radial-gradient(900px 500px at 120% 120%, #160d3a 0%, transparent 50%),
+                          linear-gradient(180deg, var(--violet-2) 0%, var(--violet-1) 35%, var(--night) 100%);
+      display:grid; place-items:center; overflow:hidden;
+    }
+
+    /* ÉTOILES (légère animation) */
+    .stars, .stars:before, .stars:after{
+      content:""; position:absolute; inset:0; background-repeat:repeat;
+      background-image:
+        radial-gradient(2px 2px at 20% 30%, #fff8, transparent 40%),
+        radial-gradient(1.5px 1.5px at 70% 60%, #fff6, transparent 40%),
+        radial-gradient(1.2px 1.2px at 40% 80%, #fff5, transparent 40%),
+        radial-gradient(1.2px 1.2px at 85% 20%, #fff7, transparent 40%);
+      animation: twinkle 12s linear infinite;
+      pointer-events:none;
+    }
+    .stars:before{animation-duration: 18s; opacity:.6}
+    .stars:after{animation-duration: 24s; opacity:.35}
+    @keyframes twinkle { 0%{transform:translateY(0)} 100%{transform:translateY(-20px)} }
+
+    /* MONTAGNES / FORÊT */
+    .scene{position:absolute; inset:0; overflow:hidden; pointer-events:none}
+    .mountains{
+      position:absolute; left:0; right:0; bottom:-2px; height:40%;
+      background:
+        radial-gradient(1200px 220px at 50% 100%, #0000 20%, #0002 21%, #0000 22%),
+        linear-gradient( to top, #0d0a22, #171238 55%, #1f1750 );
+      mask: linear-gradient(180deg, transparent 0%, #000 18%);
+      opacity:.8;
+    }
+    .trees{
+      position:absolute; left:0; right:0; bottom:-1px; height:34%;
+      background:
+        url("data:image/svg+xml;utf8,
+        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 240' preserveAspectRatio='none'>\
+          <g fill='%23100d2b'>\
+            <path d='M0,220 L1200,220 1200,240 0,240Z'/>\
+            <path d='M40,220 l20,-45 20,45 z M140,220 l24,-54 24,54 z M240,220 l18,-40 18,40 z M340,220 l26,-60 26,60 z M440,220 l20,-47 20,47 z M540,220 l24,-55 24,55 z M640,220 l18,-41 18,41 z M740,220 l25,-59 25,59 z M840,220 l19,-44 19,44 z M940,220 l24,-56 24,56 z M1040,220 l18,-40 18,40 z M1140,220 l26,-60 26,60 z'/>\
+          </g>\
+        </svg>") bottom  1200px 240px repeat-x;
+      opacity:.9;
+    }
+
+    /* CARTE LOGIN */
+    .wrap{position:relative; z-index:2; width:min(440px, 92%); margin:40px auto}
+    .card{
+      background:var(--glass); border:1px solid var(--stroke); border-radius:18px;
+      padding:28px 24px 26px; backdrop-filter: blur(10px);
+      box-shadow: 0 10px 40px rgba(0,0,0,.25);
+    }
+    .brand{display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:10px; color:#e9d5ff}
+    .brand .dot{width:34px; height:34px; border-radius:10px; background:linear-gradient(135deg,#60a5fa,#22d3ee)}
+    h1{margin:.2rem 0 1rem; font-size:1.5rem; text-align:center}
+
+    .msg-area{margin-bottom:12px}
+    .alert{padding:10px 12px; border-radius:10px; background:#f8717115; border:1px solid #f8717155; color:#fecaca}
+    .alert.success{background:#10b98112;border-color:#10b98155;color:#bbf7d0}
+
+    .field{margin:12px 0}
+    .label{display:block; font-size:.9rem; color:var(--muted); margin-bottom:6px}
+    .control{
+      display:flex; align-items:center; gap:10px;
+      background:var(--input); border:1px solid var(--stroke);
+      border-radius:12px; padding:12px 14px;
+    }
+    .control svg{width:18px; height:18px; opacity:.9}
+    .control input{
+      all:unset; color:var(--text); flex:1; font-size:15px;
+    }
+    .control:focus-within{outline:2px solid var(--focus); outline-offset:2px}
+
+    .row{display:flex; align-items:center; justify-content:space-between; margin:10px 2px 0}
+    .row a{color:#e9d5ff; text-decoration:none; font-size:.9rem}
+    .row a:hover{text-decoration:underline}
+
+    .btn{
+      width:100%; margin-top:16px; padding:12px 16px; border:0; border-radius:999px;
+      font-weight:700; cursor:pointer; background:#fff; color:#3a2d91;
+      box-shadow: 0 8px 20px rgba(0,0,0,.18);
+    }
+    .btn:hover{filter:brightness(1.03)}
+    .foot{margin-top:14px; text-align:center; color:var(--muted); font-size:.92rem}
+    .foot a{color:#e9d5ff; text-decoration:none}
+    .foot a:hover{text-decoration:underline}
+
+    .footer-note{
+      position:fixed; left:50%; transform:translateX(-50%); bottom:14px;
+      color:#cbd5e1; font-size:.8rem; opacity:.7
+    }
+  </style>
+</head>
+<body>
+  <div class="stars"></div>
+  <div class="scene">
+    <div class="mountains"></div>
+    <div class="trees"></div>
+  </div>
+
+  <main class="wrap">
+    <div class="card" role="dialog" aria-labelledby="title">
+      <div class="brand"><span class="dot"></span><strong>MeetingAI</strong></div>
+      <h1 id="title">Connexion</h1>
+
+      {% if messages %}
+        <div class="msg-area">
+          {% for message in messages %}
+            <div class="alert {{ message.tags|default:'' }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <form method="post" action="{% url 'login' %}" novalidate>
+        {% csrf_token %}
+
+        <div class="field">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-5 0-9 2.5-9 5.5A1.5 1.5 0 0 0 4.5 21h15A1.5 1.5 0 0 0 21 19.5C21 16.5 17 14 12 14Z" fill="#fff"/></svg>
+          <label class="label" for="id_username">Nom d’utilisateur</label>
+          <div class="control">
+            <!-- user icon -->
+            
+            <input id="id_username" name="username" placeholder="jdupont" required autofocus>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label" for="id_password">Mot de passe</label>
+          <div class="control">
+            <!-- lock icon -->
+            
+            <input id="id_password" type="password" name="password" placeholder="••••••••" required>
+          </div>
+        </div>
+
+        <div class="row">
+          <label style="display:flex;align-items:center;gap:8px;font-size:.9rem;color:var(--muted);">
+            <input type="checkbox" name="remember" style="accent-color:#c4b5fd"> Se souvenir de moi
+          </label>
+          
+        </div>
+
+        <button class="btn" type="submit">Se connecter</button>
+        
+      </form>
+    </div>
+  </main>
+
+  <div class="footer-note">© {% now "Y" %} MeetingAI · Interne</div>
+</body>
+</html>
