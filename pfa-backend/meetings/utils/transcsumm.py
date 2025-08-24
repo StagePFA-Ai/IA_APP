@@ -1,59 +1,61 @@
 # meetings/consumers.py
-import io
-import json
-import re
+import json, re
 from typing import List
-
 import numpy as np
 from channels.generic.websocket import AsyncWebsocketConsumer
 from faster_whisper import WhisperModel
-from pydub import AudioSegment
 from transformers import pipeline
 
-# ---------- Modèles chargés une seule fois ----------
+def _clean(s: str) -> str:
+    return re.sub(r"\s+", " ", s or "").strip()
+
+def _chunk(text: str, n=1800) -> List[str]:
+    return [text[i:i+n] for i in range(0, len(text), n)]
+
 class _Models:
-    # adapte: "small" / "medium" / "large-v3", device="cuda" si GPU
-    asr = WhisperModel("medium", device="cpu", compute_type="int8")
+    asr = WhisperModel("small", device="cpu", compute_type="int8")  # commence petit pour tester
     summarizers = {
         "fr": pipeline("summarization", model="csebuetnlp/mT5_multilingual_XLSum"),
         "en": pipeline("summarization", model="facebook/bart-large-cnn"),
         "ar": pipeline("summarization", model="csebuetnlp/mT5_multilingual_XLSum"),
     }
 
-def _clean(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip()
-
-def _chunk(text: str, n=1800) -> List[str]:
-    parts, i = [], 0
-    while i < len(text):
-        parts.append(text[i:i+n])
-        i += n
-    return parts
-
 class TranscriptionConsumer(AsyncWebsocketConsumer):
     """
-    Reçoit des segments webm/opus depuis le navigateur (MediaRecorder),
-    décode en PCM 16k mono -> faster-whisper -> renvoie le texte.
+    Reçoit des buffers Float32Array (PCM mono 16 kHz) depuis le navigateur.
+    Accumule, puis lance Whisper sur la partie nouvelle avec un léger recouvrement.
     """
-    # seuil (~1.5s à 2s) avant un passage ASR
-    BUFFER_MIN_BYTES = 60000
+    SR = 16000
+    MIN_NEW_SEC = 2.0
+    OVERLAP_SEC = 0.5
+    MIN_NEW_SAMPLES = int(SR * MIN_NEW_SEC)
+    OVERLAP_SAMPLES = int(SR * OVERLAP_SEC)
 
     async def connect(self):
         await self.accept()
         self.recording = False
-        self.audio_buffer = bytearray()
+        self.lang = "fr"
+        self.pcm = np.empty(0, dtype=np.float32)   # tout le flux PCM
+        self.processed = 0                         # samples déjà passés à l'ASR
         self.collected_text: List[str] = []
 
     async def disconnect(self, code):
         self.recording = False
 
     async def receive(self, text_data=None, bytes_data=None):
-        # --- audio binaire ---
-        if bytes_data:
-            if self.recording:
-                self.audio_buffer.extend(bytes_data)
-                if len(self.audio_buffer) >= self.BUFFER_MIN_BYTES:
-                    await self._flush_asr()
+        # --- audio binaire (Float32) ---
+        if bytes_data and self.recording:
+            try:
+                chunk = np.frombuffer(bytes_data, dtype=np.float32)
+                if chunk.size == 0:
+                    return
+                # concatène au tampon global
+                self.pcm = np.concatenate([self.pcm, chunk])
+
+                # si assez de nouveauté, lance ASR
+                await self._flush_if_enough()
+            except Exception as e:
+                await self._info(f"Erreur PCM: {e}")
             return
 
         # --- messages texte ---
@@ -63,42 +65,58 @@ class TranscriptionConsumer(AsyncWebsocketConsumer):
 
             if action == "start":
                 self.recording = True
-                await self.send(json.dumps({"type": "info", "message": "🎤 Transcription démarrée"}))
+                self.lang = (msg.get("lang") or "fr").lower()
+                self.pcm = np.empty(0, dtype=np.float32)
+                self.processed = 0
+                self.collected_text.clear()
+                await self._info("🎤 Transcription démarrée")
 
             elif action == "stop":
                 self.recording = False
-                if self.audio_buffer:
-                    await self._flush_asr()
-                await self.send(json.dumps({"type": "info", "message": "⏹️ Transcription arrêtée"}))
+                try:
+                    await self._flush(final=True)
+                except Exception as e:
+                    await self._info(f"Erreur flush final: {e}")
+                await self._info("⏹️ Transcription arrêtée")
 
             elif action == "summarize":
-                lang = (msg.get("lang") or "fr").lower()
                 full = _clean(" ".join(self.collected_text))
                 if not full:
                     return await self.send(json.dumps({"type": "summary", "message": "⚠️ Aucun texte à résumer"}))
-                summarizer = _Models.summarizers.get(lang, _Models.summarizers["fr"])
-                pieces = []
+                summarizer = _Models.summarizers.get(self.lang, _Models.summarizers["fr"])
+                parts = []
                 for ch in _chunk(full, 1800):
                     out = summarizer(ch, max_length=220, min_length=60, do_sample=False)
-                    pieces.append(out[0]["summary_text"])
-                summary = _clean(" ".join(pieces))
-                await self.send(json.dumps({"type": "summary", "message": summary}))
+                    parts.append(out[0]["summary_text"])
+                await self.send(json.dumps({"type": "summary", "message": _clean(" ".join(parts))}))
 
-    async def _flush_asr(self):
-        try:
-            # webm/opus -> PCM 16k mono (ffmpeg requis sur la machine)
-            audio = AudioSegment.from_file(io.BytesIO(self.audio_buffer), format="webm")
-            audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
-            samples = np.array(audio.get_array_of_samples()).astype(np.float32) / 32768.0
+    async def _flush_if_enough(self):
+        new = self.pcm.size - self.processed
+        if new >= self.MIN_NEW_SAMPLES:
+            await self._run_asr()
 
-            segments, _ = _Models.asr.transcribe(
-                samples, language="fr", vad_filter=True, beam_size=1
-            )
-            text = _clean(" ".join(seg.text for seg in segments))
-            if text:
-                self.collected_text.append(text)
-                await self.send(json.dumps({"type": "transcription", "message": text}))
-        except Exception as e:
-            await self.send(json.dumps({"type": "info", "message": f"Erreur transcription: {e}"}))
-        finally:
-            self.audio_buffer.clear()
+    async def _flush(self, final=False):
+        if self.pcm.size > self.processed:
+            await self._run_asr(final=final)
+
+    async def _run_asr(self, final=False):
+        start = max(0, self.processed - self.OVERLAP_SAMPLES)
+        chunk = self.pcm[start:]
+        if chunk.size <= 0:
+            return
+
+        segments, _ = _Models.asr.transcribe(
+            chunk, language=self.lang, vad_filter=True, beam_size=1
+        )
+        text = _clean(" ".join(s.text for s in segments))
+        if text:
+            self.collected_text.append(text)
+            await self.send(json.dumps({"type": "transcription", "message": text}))
+
+        # on garde un petit tail pour éviter de couper un mot
+        self.processed = max(self.processed, self.pcm.size - self.OVERLAP_SAMPLES)
+        if final:
+            self.processed = self.pcm.size
+
+    async def _info(self, m: str):
+        await self.send(json.dumps({"type": "info", "message": m}))

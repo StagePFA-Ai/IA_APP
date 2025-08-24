@@ -1,0 +1,111 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}MeetMind · Système de résumé de réunions{% endblock %}</title>
+
+  <!-- CSS global -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+
+  {% block extra_head %}{% endblock %}
+
+  <style>
+    /* Style minimal commun (tu peux déplacer vers styles.css) */
+    body{background:#f5f5f7;min-height:100vh;display:flex}
+    .sidebar{width:260px;background:#1f2a37;color:#fff;display:flex;flex-direction:column;padding:20px}
+    .sidebar .brand{font-weight:700;font-size:1.25rem;margin-bottom:6px}
+    .sidebar .muted{opacity:.75;font-size:.9rem;margin-bottom:22px}
+    .sidebar a{color:#e5e7eb;text-decoration:none;padding:10px 12px;border-radius:8px;display:block;margin-bottom:6px}
+    .sidebar a.active,.sidebar a:hover{background:#2563eb;color:#fff}
+    .main{flex:1;display:flex;flex-direction:column;min-width:0}
+    .topbar{background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+    .content{padding:22px}
+    .cardx{border:0;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+  </style>
+</head>
+<body>
+  {% with current_view=request.resolver_match.view_name %}
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">MeetMind</div>
+    <div class="muted">Résumés intelligents</div>
+    <nav>
+      <a href="{% url 'dashboard' %}"
+         class="{% if current_view == 'meetings:dashboard' %}active{% endif %}">
+        Tableau de bord
+      </a>
+
+      {% if not disable_reunions %}
+        <a href="{% url 'meetings' %}"
+           class="{% if current_view == 'meetings:meetings_page' %}active{% endif %}">
+          Réunions
+        </a>
+        <a href="{% url 'calendar' %}"
+           class="{% if current_view == 'meetings:calendar' %}active{% endif %}">
+          Calendrier
+        </a>
+      {% else %}
+        <span class="text-white-50 d-block px-2">Réunions (désactivé)</span>
+        <span class="text-white-50 d-block px-2">Calendrier (désactivé)</span>
+      {% endif %}
+
+      <a href="{% url 'settings' %}"
+         class="{% if current_view == 'meetings:settings' %}active{% endif %}">
+        Paramètres
+      </a>
+
+      {% block sidebar_extra %}{% endblock %}
+    </nav>
+    <div class="mt-auto small text-white-50">
+      Connecté : {{ request.user.get_full_name|default:request.user.username }}<br>
+      © {% now "Y" %} Local
+    </div>
+  </aside>
+  {% endwith %}
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary d-md-none" id="toggleSidebar">☰</button>
+        <h1 class="h5 m-0">{% block page_title %}Bienvenue{% endblock %}</h1>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        {% block topbar_actions %}
+          <!-- Ex: <a class="btn btn-primary btn-sm" href="{% url 'meetings:creer_reunion' %}">Nouvelle réunion</a> -->
+        {% endblock %}
+      </div>
+    </header>
+
+    <!-- CONTENT -->
+    <main class="content container-fluid">
+      {% if messages %}
+        <div class="mb-3">
+          {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} mb-2">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <!-- JS global -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    // Toggle sidebar on small screens
+    document.getElementById('toggleSidebar')?.addEventListener('click', () => {
+      const s = document.querySelector('.sidebar');
+      s.style.display = (s.style.display === 'none' ? 'flex' : 'none');
+    });
+  </script>
+
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

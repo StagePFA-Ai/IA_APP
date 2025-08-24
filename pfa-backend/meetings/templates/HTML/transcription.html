@@ -130,6 +130,10 @@
     <a class="btn btn-outline-dark btn-sm" href="{% url 'generate_report' reunion.id %}">
   📄 Générer le rapport
   </a>
+  <a class="btn btn-outline-primary btn-sm" href="{% url 'meeting_report_view' reunion.id %}">
+  👀 Aperçu rapport
+</a>
+
   </div>
 
   <script>
@@ -168,6 +172,9 @@
     let tick = null;
     let autoStopTimer = null;
     let accumulatedText = [];  // pour sauver à la fin
+    let audioCtx = null;
+    let source   = null;
+    let processor = null; 
 
     const WS_URL = "{{ webrtc_ws_url|default:'/ws/transcription/' }}"; // défini dans ta vue
 
@@ -206,86 +213,89 @@
       sumDiv.scrollTop = sumDiv.scrollHeight;
     }
 
-    async function start() {
-      try {
-        // 1) WebSocket
-        if (!ws || ws.readyState === WebSocket.CLOSED) {
-          ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + WS_URL);
-          ws.binaryType = "arraybuffer";
-          ws.onmessage = (e) => {
-            try {
-              const data = JSON.parse(e.data);
-              if (data.type === "transcription") appendTrans(data.message);
-              else if (data.type === "summary")   setSummary(data.message);
-              else if (data.type === "info")      transDiv.textContent += (transDiv.textContent ? "\n" : "") + data.message;
-            } catch(_) {}
-          };
-          await new Promise(res => ws.onopen = res);
-        }
-
-        // 2) Micro
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false }
-        });
-
-        // 3) MediaRecorder -> envoie des blobs 1s en ArrayBuffer
-        rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-        rec.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
-            e.data.arrayBuffer().then(buf => ws.send(buf));
-          }
-        };
-        rec.start(1000);
-
-        // 4) action start
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ action: "start" }));
-        }
-
-        // 5) UI
-        transDiv.textContent += (transDiv.textContent ? "\n" : "") + "🎤 Transcription démarrée…";
-        t0 = Date.now();
-        timerEl.textContent = "00:00";
-        clearInterval(tick);
-        tick = setInterval(() => {
-          const sec = (Date.now() - t0) / 1000;
-          timerEl.textContent = fmtTime(sec);
-        }, 250);
-
-        // Auto-stop si durée max définie
-        clearTimeout(autoStopTimer);
-        const mins = parseInt(maxMins.value || "0", 10);
-        if (mins > 0) {
-          autoStopTimer = setTimeout(stop, mins * 60 * 1000);
-        }
-
-        setState(true);
-        logInfo("");
-
-      } catch (err) {
-        logInfo("Erreur micro/WebSocket : " + (err?.message || err));
-        setState(false);
-      }
+    
+async function start() {
+  try {
+    // 1) WebSocket
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+      ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + WS_URL);
+      ws.binaryType = "arraybuffer";
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === "transcription") appendTrans(data.message);
+          else if (data.type === "summary")   setSummary(data.message);
+          else if (data.type === "info")      transDiv.textContent += (transDiv.textContent ? "\n" : "") + data.message;
+        } catch(_) {}
+      };
+      await new Promise(res => ws.onopen = res);
     }
 
-    function stop() {
-      try {
-        if (rec && rec.state !== "inactive") rec.stop();
-      } catch(_) {}
-      try {
-        if (stream) stream.getTracks().forEach(t => t.stop());
-      } catch(_) {}
-      try {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ action: "stop" }));
-        }
-      } catch(_) {}
+    // 2) Micro
+    stream = await navigator.mediaDevices.getUserMedia({
+     audio: {
+    channelCount: 1,
+    echoCancellation: false,   // ← OFF
+    noiseSuppression: false,   // ← OFF
+    autoGainControl: true      // ← ON
+   }
+    });
 
-      clearInterval(tick);
-      clearTimeout(autoStopTimer);
-      setState(false);
-      transDiv.textContent += (transDiv.textContent ? "\n" : "") + "⏹️ Transcription arrêtée.";
+    // 3) WebAudio → Float32 PCM (downsample 16 kHz) → WebSocket (binary)
+    audioCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    source    = audioCtx.createMediaStreamSource(stream);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (ev) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const input = ev.inputBuffer.getChannelData(0);          // Float32 @ audioCtx.sampleRate (≈48 kHz)
+      const pcm16 = downsampleTo16k(input, audioCtx.sampleRate); // Float32 @ 16 kHz
+      ws.send(pcm16.buffer);                                     // envoi binaire
+    };
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    // 4) action start + UI
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: "start", lang: (langSel.value || "fr") }));
     }
+
+    transDiv.textContent += (transDiv.textContent ? "\n" : "") + "🎤 Transcription démarrée…";
+    t0 = Date.now();
+    timerEl.textContent = "00:00";
+    clearInterval(tick);
+    tick = setInterval(() => {
+      const sec = (Date.now() - t0) / 1000;
+      timerEl.textContent = fmtTime(sec);
+    }, 250);
+
+    // Auto-stop si durée max définie
+    clearTimeout(autoStopTimer);
+    const mins = parseInt(maxMins.value || "0", 10);
+    if (mins > 0) autoStopTimer = setTimeout(stop, mins * 60 * 1000);
+
+    setState(true);
+    logInfo("");
+
+  } catch (err) {
+    logInfo("Erreur micro/WebSocket : " + (err?.message || err));
+    setState(false);
+  }
+}
+
+
+
+   function stop() {
+  try { processor && processor.disconnect(); } catch(_) {}
+  try { source && source.disconnect(); } catch(_) {}
+  try { audioCtx && audioCtx.close(); } catch(_) {}
+  try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(_) {}
+  try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ action: "stop" })); } catch(_) {}
+
+  clearInterval(tick);
+  clearTimeout(autoStopTimer);
+  setState(false);
+  transDiv.textContent += (transDiv.textContent ? "\n" : "") + "⏹️ Transcription arrêtée.";
+}
 
     function toggle() {
       if (running) stop();
@@ -349,6 +359,23 @@
     window.addEventListener('beforeunload', () => {
       try { if (running) stop(); } catch(_){}
     });
+    function downsampleTo16k(float32Buffer, inSampleRate) {
+  if (inSampleRate === 16000) return new Float32Array(float32Buffer);
+  const ratio = inSampleRate / 16000;
+  const outLen = Math.round(float32Buffer.length / ratio);
+  const out = new Float32Array(outLen);
+  let inPos = 0;
+  for (let i = 0; i < outLen; i++) {
+    const nextInPos = Math.round((i + 1) * ratio);
+    let sum = 0, count = 0;
+    for (; inPos < nextInPos && inPos < float32Buffer.length; inPos++) {
+      sum += float32Buffer[inPos];
+      count++;
+    }
+    out[i] = count ? (sum / count) : 0;
+  }
+  return out;
+}
   </script>
 </body>
 </html>

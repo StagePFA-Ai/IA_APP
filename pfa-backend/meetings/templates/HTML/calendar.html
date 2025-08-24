@@ -21,6 +21,7 @@
     #calendar{height:100%}
     .meeting-card{background:#f8f9fa;border-radius:6px;padding:15px;margin-bottom:15px;border-left:4px solid #3498db}
     .meeting-actions .btn{margin-right:.4rem;margin-top:.5rem}
+    .hint{font-size:.85rem;color:#6b7280}
     @media (max-width: 992px){.calendar-page{flex-direction:column;height:auto}}
   </style>
 </head>
@@ -33,9 +34,9 @@
     </div>
     <nav class="sidebar-nav">
       <a href="{% url 'dashboard' %}">Tableau de bord</a>
-      <a href="/meetings">Réunions</a>
+      <a href="{% url 'meetings' %}">Réunions</a>
       <a href="{% url 'calendar' %}" class="active">Calendrier</a>
-      <a href="/settings">Paramètres</a>
+      <a href="{% url 'settings' %}">Paramètres</a>
     </nav>
     <div class="sidebar-footer mt-auto small opacity-75">© {% now "Y" %} Local</div>
   </aside>
@@ -56,6 +57,10 @@
         <!-- Colonne dynamique (aujourd’hui par défaut côté serveur) -->
         <div class="calendar-card">
           <h3 class="h6">Réunions le <span id="dayTitle">{{ selected_date|date:"l j F Y" }}</span></h3>
+          <div class="hint mb-2">
+            Seules les réunions <strong>du jour</strong> peuvent être démarrées.
+            Les réunions dépassées non démarrées sont automatiquement <strong>reportées</strong>.
+          </div>
           <div id="dayList">
             {% if meetings_on_date %}
               {% for m in meetings_on_date %}
@@ -64,23 +69,9 @@
                   <div class="text-muted small">{{ m.date_r|date:"d/m/Y" }} · {{ m.heure_r|time:"H:i" }}</div>
                   <span class="badge bg-secondary mt-1">{{ m.get_status_display }}</span>
                   <div class="meeting-actions">
-                    <button class="btn btn-sm btn-outline-primary btn-manage"
-                            data-id="{{ m.id }}"
-                            data-title="{{ m.titre }}"
-                            data-date="{{ m.date_r|date:'Y-m-d' }}"
-                            data-time="{{ m.heure_r|time:'H:i' }}">
-                      Gérer
-                    </button>
+                    <button class="btn btn-sm btn-outline-primary btn-manage" data-id="{{ m.id }}">Gérer</button>
                     <a class="btn btn-sm btn-outline-dark" href="{% url 'view_meeting' m.id %}">Voir</a>
-                    {% if m.status == 'planifier' %}
-                      <button class="btn btn-sm btn-success btn-start"
-                              data-id="{{ m.id }}"
-                              data-title="{{ m.titre }}"
-                              data-date="{{ m.date_r|date:'Y-m-d' }}"
-                              data-time="{{ m.heure_r|time:'H:i' }}">
-                        Démarrer
-                      </button>
-                    {% endif %}
+                    <!-- Les boutons Démarrer/Rejoindre seront ajoutés côté JS selon can_start/can_resume -->
                   </div>
                 </div>
               {% endfor %}
@@ -128,7 +119,7 @@
     </div>
   </div>
 
-  <!-- Modal: gérer / démarrer -->
+  <!-- Modal: gérer / démarrer / rejoindre -->
   <div class="modal fade" id="modalManage" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
       <form class="modal-content" id="formManage" method="post" action="{% url 'calendar_meeting_update' %}">
@@ -163,6 +154,7 @@
             <div class="form-text">Seul le créateur peut modifier les participants.</div>
           </div>
 
+          <div id="mg_hint" class="hint mt-2"></div>
           <div class="alert alert-danger d-none mt-3" id="manageError"></div>
         </div>
 
@@ -170,6 +162,7 @@
           <button type="button" class="btn btn-light" data-bs-dismiss="modal">Fermer</button>
           <button type="submit" class="btn btn-outline-primary" id="btnSaveManage">Enregistrer</button>
           <button type="button" class="btn btn-success" id="btnStartFromManage">Démarrer</button>
+          <button type="button" class="btn btn-warning" id="btnResumeFromManage">Rejoindre</button>
         </div>
       </form>
     </div>
@@ -183,7 +176,7 @@
     function getCookie(name){ const v=`; ${document.cookie}`.split(`; ${name}=`); if(v.length===2) return v.pop().split(';').shift(); }
     const csrftoken = getCookie('csrftoken');
 
-    // ------ Rendu colonne du jour
+    // ------ Rendu colonne du jour (on suit le JSON du serveur)
     function renderDayList(payload){
       const dayList  = document.getElementById('dayList');
       const dayTitle = document.getElementById('dayTitle');
@@ -198,23 +191,12 @@
           <div class="fw-bold">${m.titre}</div>
           <div class="text-muted small">${new Date(m.date).toLocaleDateString('fr-FR')} · ${m.heure}</div>
           <span class="badge bg-secondary mt-1">${m.status_label}</span>
+          ${m.hint ? `<div class="hint mt-1">${m.hint}</div>` : ``}
           <div class="meeting-actions">
-            <button class="btn btn-sm btn-outline-primary btn-manage"
-                    data-id="${m.id}"
-                    data-title="${m.titre.replace(/"/g,'&quot;')}"
-                    data-date="${m.date}"
-                    data-time="${m.heure}">
-              Gérer
-            </button>
+            <button class="btn btn-sm btn-outline-primary btn-manage" data-id="${m.id}">Gérer</button>
             <a class="btn btn-sm btn-outline-dark" href="/meetings/${m.id}/view/">Voir</a>
-            ${m.status === 'planifier' ? `
-              <button class="btn btn-sm btn-success btn-start"
-                      data-id="${m.id}"
-                      data-title="${m.titre.replace(/"/g,'&quot;')}"
-                      data-date="${m.date}"
-                      data-time="${m.heure}">
-                Démarrer
-              </button>` : ``}
+            ${m.can_start ? `<button class="btn btn-sm btn-success btn-start" data-id="${m.id}">Démarrer</button>` : ``}
+            ${m.can_resume ? `<button class="btn btn-sm btn-warning btn-resume" data-url="${m.resume_url}">Rejoindre</button>` : ``}
           </div>
         </div>
       `).join('');
@@ -236,7 +218,7 @@
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },
         events: "{% url 'calendar_events' %}",
         dateClick: function(info) {
-          loadDay(info.dateStr); // met à jour la colonne de droite
+          loadDay(info.dateStr);
         },
         eventClick: function(info) {
           info.jsEvent.preventDefault();
@@ -244,9 +226,9 @@
         }
       });
       calendar.render();
-      window.calendar = calendar; // (facultatif) pour refetchEvents ailleurs
+      window.calendar = calendar;
 
-      // ------ Initialiser la colonne avec la date du contexte (aujourd’hui par défaut côté serveur)
+      // ------ Initialiser la colonne du jour (valeur serveur ou aujourd’hui)
       await loadDay("{{ selected_date|date:'Y-m-d' }}");
 
       // ------ Modale création
@@ -276,8 +258,8 @@
           const data = await resp.json();
           if (data.ok) {
             modalCreate.hide();
-            calendar.refetchEvents();        // recharge le calendrier
-            await loadDay(formData.get('date')); // rafraîchit la colonne
+            calendar.refetchEvents();
+            await loadDay(formData.get('date'));
           } else {
             throw new Error(data.error || 'Erreur inconnue');
           }
@@ -287,7 +269,7 @@
         }
       });
 
-      // ------ Modale gérer / démarrer
+      // ------ Modale gérer / démarrer / rejoindre
       const modalManage   = new bootstrap.Modal(document.getElementById('modalManage'));
       const formManage    = document.getElementById('formManage');
       const manageError   = document.getElementById('manageError');
@@ -296,17 +278,20 @@
       const mgDate        = document.getElementById('mg_date');
       const mgTime        = document.getElementById('mg_time');
       const mgParticipants= document.getElementById('mg_participants');
-      const btnStartFromManage = document.getElementById('btnStartFromManage');
+      const mgHint        = document.getElementById('mg_hint');
+      const btnStartFromManage  = document.getElementById('btnStartFromManage');
+      const btnSaveManage       = document.getElementById('btnSaveManage');
+      const btnResumeFromManage = document.getElementById('btnResumeFromManage');
 
-      // ouvrir la modale "Gérer"
+      // Ouvrir la modale "Gérer"
       document.getElementById('dayList').addEventListener('click', async (e) => {
         const btn = e.target.closest('.btn-manage');
         if(!btn) return;
 
         manageError.classList.add('d-none');
+        mgHint.textContent = '';
 
         const id = btn.dataset.id;
-        // astuce: URL template avec pk=0 puis replace
         const infoUrlTpl = "{% url 'calendar_meeting_info' 0 %}";
         const infoUrl = infoUrlTpl.replace('/0/', `/${id}/`);
 
@@ -328,10 +313,22 @@
           mgParticipants.appendChild(opt);
         });
 
+        // Droits/état
+        mgDate.disabled = !data.can_edit;
+        mgTime.disabled = !data.can_edit;
+        mgParticipants.disabled = !data.can_edit;
+        btnSaveManage.disabled = !data.can_edit;
+
+        btnStartFromManage.disabled  = !data.can_start;
+        btnResumeFromManage.disabled = !data.can_resume;
+        btnResumeFromManage.onclick = () => { if (data.resume_url) window.location.href = data.resume_url; };
+
+        mgHint.textContent = data.hint || '';
+
         modalManage.show();
       });
 
-      // enregistrer (date/heure/participants)
+      // Enregistrer (date/heure/participants)
       formManage.addEventListener('submit', async (e) => {
         e.preventDefault();
         manageError.classList.add('d-none');
@@ -355,7 +352,7 @@
         }
       });
 
-      // démarrer depuis la modale "Gérer"
+      // Démarrer depuis la modale "Gérer"
       btnStartFromManage.addEventListener('click', async () => {
         manageError.classList.add('d-none');
         const payload = new FormData();
@@ -378,31 +375,35 @@
         }
       });
 
-      // bouton "Démarrer" direct (sur carte)
+      // Bouton "Rejoindre" direct (sur carte du jour)
+      document.getElementById('dayList').addEventListener('click', (e) => {
+        const b = e.target.closest('.btn-resume');
+        if (!b) return;
+        const url = b.dataset.url;
+        if (url) window.location.href = url;
+      });
+
+      // Bouton "Démarrer" direct (sur carte du jour)
       document.getElementById('dayList').addEventListener('click', async (e)=>{
         const btn = e.target.closest('.btn-start');
         if(!btn) return;
-        // On remplit la modale avec les données de la carte et on clique Démarrer
-        document.getElementById('mg_id').value   = btn.dataset.id;
-        document.getElementById('mg_title').value= btn.dataset.title;
-        document.getElementById('mg_date').value = btn.dataset.date;
-        document.getElementById('mg_time').value = btn.dataset.time;
-        // participants: on recharge via info pour cohérence
+
+        // Vérifie côté serveur que le démarrage est autorisé
         const infoUrlTpl = "{% url 'calendar_meeting_info' 0 %}";
         const infoUrl = infoUrlTpl.replace('/0/', `/${btn.dataset.id}/`);
         const r = await fetch(infoUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
         if(r.ok){
           const data = await r.json();
-          mgParticipants.innerHTML = '';
-          data.participants_all.forEach(u => {
-            const opt = document.createElement('option');
-            opt.value = u.id;
-            opt.textContent = u.label;
-            if (u.selected) opt.selected = true;
-            mgParticipants.appendChild(opt);
-          });
+          if (data.can_start) {
+            const payload = new FormData();
+            payload.append('id', data.id);
+            payload.append('date', data.date);
+            payload.append('heure', data.heure);
+            const s = await fetch("{% url 'calendar_start' %}", { method:'POST', headers:{'X-CSRFToken': csrftoken}, body: payload });
+            const j = await s.json();
+            if (j.ok && j.redirect) window.location.href = j.redirect;
+          }
         }
-        new bootstrap.Modal(document.getElementById('modalManage')).show();
       });
     });
   </script>

@@ -117,38 +117,83 @@ def dashboard(request):
     }
     return render(request, "HTML/dashboard.html", ctx)
 # Calendar view
-def _scope_user(user):
-    """Renvoie un filtre Q pour les réunions visibles par l'utilisateur."""
-    return Q(utilisateur=user) | Q(participants=user)
+# meetings/views_calendar.py
+from datetime import date as ddate, time as dtime
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth import get_user_model
+from django.db.models import Q, Sum
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
+from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.dateparse import parse_date
+
+
+from .models import Reunion  # adapte si le modèle est ailleurs
+
+User = get_user_model()
+
+# --------- Constantes ---------
+STATUS_LABELS = {
+    "planifie": "Planifié",
+    "en_cours":  "En cours",
+    "termine":  "Terminé",
+    "annule":   "Annulé",
+    "reporte":  "Reporté",
+}
+
+STATUS_COLORS = {
+    "planifie": "#2563eb",  # bleu
+    "en_cours":  "#10b981",  # vert
+    "termine":  "#6b7280",  # gris
+    "annule":   "#ef4444",  # rouge
+    "reporte":  "#f59e0b",  # orange
+}
+
+# --------- Helpers ---------
+def _today_local():
+    return timezone.localdate()
 
 def _parse_hhmm(s: str):
-    """'HH:MM' -> datetime.time"""
+    """'HH:MM' -> datetime.time | None"""
     try:
         h, m = (s or "").split(":")
         return dtime(int(h), int(m))
     except Exception:
         return None
 
-STATUS_COLORS = {
-    "planifier": "#2563eb",  # bleu
-    "en_cours": "#10b981",   # vert
-    "terminer": "#6b7280",   # gris
-    "annuler": "#ef4444",    # rouge
-    "reporter": "#f59e0b",   # orange
-}
+def _scope_user(user):
+    """Réunions visibles par l'utilisateur : créateur OU participant."""
+    return Q(utilisateur=user) | Q(participants=user)
 
-def _user_label(u: User) -> str:
-    full = f"{u.first_name} {u.last_name}".strip()
-    return full or u.username
+def _can_start(m: Reunion) -> bool:
+    """Démarrage autorisé uniquement le jour J si statut 'planifier'."""
+    return m.status == "planifier" and m.date_r == _today_local()
 
-# ------------------------
-# Page Calendrier
-# ------------------------
+def _can_resume(m: Reunion) -> bool:
+    """Rejoindre la transcription si réunion en cours le jour J."""
+    return m.status == "en_cours" and m.date_r == _today_local()
 
+def _can_edit(m: Reunion, user: User) -> bool: # type: ignore
+    """Le créateur peut modifier :
+       - si réunion aujourd'hui ou future
+       - si reportée (pour replanifier)"""
+    if m.utilisateur_id != user.id:
+        return False
+    if m.status == "reporter":
+        return True
+    return m.date_r >= _today_local()
+
+def _autopostpone_overdue(user: User): # type: ignore
+    """Marque 'reporter' les réunions du user dépassées restées 'planifier'."""
+    today = _today_local()
+    Reunion.objects.filter(utilisateur=user, status="planifier", date_r__lt=today).update(status="reporter")
+
+# --------- Vues Calendrier ---------
 @login_required
 def calendar(request):
-    """Rendu serveur de la page calendrier avec la colonne du jour préremplie (aujourd’hui par défaut)."""
-    selected_date = parse_date(request.GET.get("date") or "") or timezone.localdate()
+    """Page calendrier (colonne droite préremplie avec aujourd’hui)."""
+    selected_date = parse_date(request.GET.get("date") or "") or _today_local()
 
     meetings_on_date = (
         Reunion.objects
@@ -159,72 +204,90 @@ def calendar(request):
         .distinct()
     )
 
-    ctx = {
+    # auto-report “planifier” passées
+    _autopostpone_overdue(request.user)
+
+    return render(request, "HTML/calendar.html", {
         "selected_date": selected_date,
         "meetings_on_date": meetings_on_date,
-    }
-    return render(request, "HTML/calendar.html", ctx)
-
-# ------------------------
-# JSON: events pour FullCalendar
-# ------------------------
+    })
 
 @login_required
 def calendar_events(request):
-    """Renvoie la liste des événements pour FullCalendar (toutes les réunions visibles)."""
+    """Événements pour FullCalendar (toutes réunions visibles)."""
     qs = (
         Reunion.objects
         .filter(_scope_user(request.user))
         .select_related("utilisateur")
         .distinct()
     )
-
     events = []
     for r in qs:
-        start = f"{r.date_r.isoformat()}T{r.heure_r.strftime('%H:%M')}"
         events.append({
             "id": r.id,
             "title": r.titre,
-            "start": start,
-            "url": reverse("view_meeting", args=[r.id]),  # adapte le nom si besoin
+            "start": f"{r.date_r.isoformat()}T{r.heure_r.strftime('%H:%M')}",
+            "url": reverse("view_meeting", args=[r.id]),
             "color": STATUS_COLORS.get(r.status, "#2563eb"),
         })
     return JsonResponse(events, safe=False)
 
-# ------------------------
-# JSON: réunions d’un jour
-# ------------------------
-
 @login_required
 def calendar_day(request):
-    """Renvoie les réunions d’un jour (GET ?date=YYYY-MM-DD) pour remplir la colonne de droite."""
-    d = parse_date(request.GET.get("date") or "") or timezone.localdate()
+    """Réunions d’un jour (pour remplir la colonne de droite)."""
+    try:
+        day_str = request.GET.get("date", "")
+        d = parse_date(day_str) or _today_local()
+    except Exception:
+        return HttpResponseBadRequest("date invalide")
+
+    _autopostpone_overdue(request.user)
+
     qs = (
         Reunion.objects
         .filter(_scope_user(request.user), date_r=d)
+        .select_related("utilisateur")
+        .prefetch_related("participants")
         .order_by("heure_r", "titre")
         .distinct()
     )
+
     payload = {
         "date": d.isoformat(),
-        "meetings": [{
-            "id": r.id,
-            "titre": r.titre,
-            "date": r.date_r.isoformat(),
-            "heure": r.heure_r.strftime("%H:%M"),
-            "status": r.status,
-            "status_label": r.get_status_display(),
-        } for r in qs]
+        "meetings": []
     }
-    return JsonResponse(payload)
+    for m in qs:
+        can_start  = _can_start(m)
+        can_resume = _can_resume(m)
 
-# ------------------------
-# POST: créer une réunion
-# ------------------------
+        if can_resume:
+            hint = "Réunion en cours — vous pouvez la rejoindre."
+        elif m.status == "reporter":
+            hint = "Réunion dépassée non démarrée : replanifie-la."
+        elif not can_start and m.date_r == _today_local():
+            hint = "Le démarrage n’est possible que si le statut est ‘Planifié’."
+        elif not can_start and m.date_r != _today_local():
+            hint = "Le démarrage est autorisé uniquement le jour J."
+        else:
+            hint = ""
+
+        payload["meetings"].append({
+            "id": m.id,
+            "titre": m.titre,
+            "date": m.date_r.isoformat(),
+            "heure": m.heure_r.strftime("%H:%M"),
+            "status": m.status,
+            "status_label": STATUS_LABELS.get(m.status, m.status),
+            "can_start": can_start,
+            "can_resume": can_resume,
+            "resume_url": reverse("transcription", args=[m.id]) if can_resume else "",
+            "hint": hint,
+        })
+    return JsonResponse(payload)
 
 @login_required
 def calendar_create(request):
-    """Crée une réunion planifiée via la modale."""
+    """Créer une réunion (modale ‘Nouvelle réunion’)."""
     if request.method != "POST":
         return HttpResponseBadRequest("Méthode non supportée")
 
@@ -244,151 +307,149 @@ def calendar_create(request):
     )
     return JsonResponse({"ok": True, "id": r.id})
 
-# ------------------------
-# JSON: détail d’une réunion (pour la modale Gérer)
-# ------------------------
-
 @login_required
 def calendar_meeting_info(request, pk: int):
-    r = get_object_or_404(Reunion.objects.select_related("utilisateur"), pk=pk)
+    """Infos pour la modale 'Gérer' (droits + démarrer/rejoindre)."""
+    try:
+        m = (Reunion.objects
+             .select_related("utilisateur")
+             .prefetch_related("participants")
+             .get(Q(pk=pk) & _scope_user(request.user)))
+    except Reunion.DoesNotExist:
+        return HttpResponseBadRequest("Réunion introuvable ou non autorisée")
 
-    # lecture autorisée : créateur / participant / superuser
-    if not (r.utilisateur_id == request.user.id
-            or r.participants.filter(id=request.user.id).exists()
-            or request.user.is_superuser):
-        return HttpResponseForbidden("Accès refusé")
+    # Auto-report si planifiée & dépassée
+    if m.status == "planifier" and m.date_r < _today_local():
+        m.status = "reporter"
+        m.save(update_fields=["status"])
 
-    users = User.objects.all().order_by("first_name", "last_name", "username")
-    selected_ids = set(r.participants.values_list("id", flat=True))
+    can_start  = _can_start(m)
+    can_resume = _can_resume(m)
+    can_edit   = _can_edit(m, request.user)
 
-    payload = {
-        "id": r.id,
-        "titre": r.titre,
-        "date": r.date_r.isoformat(),
-        "heure": r.heure_r.strftime("%H:%M"),
-        "status": r.status,
-        "status_label": r.get_status_display(),
-        "participants": list(selected_ids),
-        "participants_all": [
-            {"id": u.id, "label": _user_label(u), "selected": (u.id in selected_ids)}
-            for u in users
-        ],
-        "can_edit": (r.utilisateur_id == request.user.id) or request.user.is_superuser,
+    # Participants (tous les users affichés — adapte si besoin)
+    selected_ids = set(m.participants.values_list("id", flat=True))
+    participants_all = []
+    for u in User.objects.order_by("username").values("id", "username", "first_name", "last_name"):
+        label = (f"{u['first_name']} {u['last_name']}".strip()) or u["username"]
+        participants_all.append({
+            "id": u["id"],
+            "label": label,
+            "selected": u["id"] in selected_ids,
+        })
+
+    if can_resume:
+        hint = "Réunion en cours — vous pouvez la rejoindre."
+    elif m.status == "reporter":
+        hint = "Cette réunion a été reportée car elle a dépassé sa date sans démarrage. Replanifie-la."
+    elif m.date_r == _today_local() and not can_start:
+        hint = "Le démarrage n’est possible que si le statut est ‘Planifié’."
+    elif m.date_r != _today_local() and not can_start:
+        hint = "Le démarrage est autorisé uniquement le jour J."
+    else:
+        hint = ""
+
+    data = {
+        "id": m.id,
+        "titre": m.titre,
+        "date": m.date_r.isoformat(),
+        "heure": m.heure_r.strftime("%H:%M"),
+        "status": m.status,
+        "status_label": STATUS_LABELS.get(m.status, m.status),
+        "can_start": can_start,
+        "can_edit": can_edit,
+        "can_resume": can_resume,
+        "resume_url": reverse("transcription", args=[m.id]) if can_resume else "",
+        "participants_all": participants_all,
+        "hint": hint,
     }
-    return JsonResponse(payload)
-
-# ------------------------
-# POST: mettre à jour date/heure/participants
-# ------------------------
+    return JsonResponse(data)
 
 @login_required
 def calendar_meeting_update(request):
+    """Met à jour date/heure/participants (créateur uniquement)."""
     if request.method != "POST":
-        return HttpResponseBadRequest("Méthode non supportée")
+        return HttpResponseBadRequest("Méthode invalide")
 
-    rid = request.POST.get("id")
-    r = get_object_or_404(Reunion, id=rid)
+    pk = request.POST.get("id")
+    try:
+        m = Reunion.objects.select_related("utilisateur").get(pk=pk)
+    except Reunion.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Réunion introuvable"}, status=400)
 
-    # Seul le créateur (ou superuser) peut modifier
-    if not (r.utilisateur_id == request.user.id or request.user.is_superuser):
-        return HttpResponseForbidden("Seul le créateur peut modifier")
+    if not _can_edit(m, request.user):
+        return JsonResponse({"ok": False, "error": "Modification non autorisée"}, status=403)
 
+    # maj date/heure
     d = parse_date(request.POST.get("date") or "")
     t = _parse_hhmm(request.POST.get("heure") or "")
-
-    if d:
-        r.date_r = d
-    if t:
-        r.heure_r = t
-    r.save(update_fields=["date_r", "heure_r"])
+    if not d or not t:
+        return JsonResponse({"ok": False, "error": "Date/heure invalides"}, status=400)
+    m.date_r, m.heure_r = d, t
 
     # participants
     ids = request.POST.getlist("participants")
     if ids:
-        r.participants.set(User.objects.filter(id__in=ids))
+        m.participants.set(User.objects.filter(id__in=ids))
     else:
-        r.participants.clear()
+        m.participants.clear()
 
+    # si 'reporter' et replanifiée aujourd’hui/futur → redevient planifiée
+    if m.status == "reporter" and m.date_r >= _today_local():
+        m.status = "planifier"
+
+    m.save()
     return JsonResponse({"ok": True})
-
-# ------------------------
-# POST: démarrer la réunion -> statut en_cours + redirection transcription
-# ------------------------
 
 @login_required
 def calendar_start(request):
+    """Démarrage d’une réunion (jour J & statut planifié)."""
     if request.method != "POST":
-        return HttpResponseBadRequest("Méthode non supportée")
+        return HttpResponseBadRequest("Méthode invalide")
 
-    rid = request.POST.get("id")
-    r = get_object_or_404(Reunion, id=rid)
-
-    # Autorisation : créateur ou superuser
-    if not (r.utilisateur_id == request.user.id or request.user.is_superuser):
-        return HttpResponseForbidden("Seul le créateur peut démarrer la réunion")
-
-    # Optionnel: mettre à jour date/heure depuis la modale avant de démarrer
-    d = parse_date(request.POST.get("date") or "")
-    t = _parse_hhmm(request.POST.get("heure") or "")
-    if d:
-        r.date_r = d
-    if t:
-        r.heure_r = t
-
-    r.status = "en_cours"
-    r.save(update_fields=["date_r", "heure_r", "status"])
-
-    # Redirection vers la page de transcription
+    pk = request.POST.get("id")
     try:
-        redirect_url = reverse("transcription")  # adapte le nom si besoin
-    except NoReverseMatch:
-        redirect_url = "/transcription/"
-    # on passe l'id pour contexte
-    if r.date_r==datetime.date.today():
-        redirect_url = f"{redirect_url}/{r.id}/"
-    else:
-        redirect_url=f"/calendar/"
+        m = Reunion.objects.select_related("utilisateur").get(pk=pk)
+    except Reunion.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Réunion introuvable"}, status=400)
 
-    return JsonResponse({"ok": True, "redirect": redirect_url})
+    if not _can_start(m):
+        return JsonResponse({"ok": False, "error": "Le démarrage est autorisé uniquement le jour J pour une réunion planifiée."}, status=403)
+
+    if m.status != "en_cours":
+        m.status = "en_cours"
+        m.save(update_fields=["status"])
+
+    return JsonResponse({"ok": True, "redirect": reverse("transcription", args=[m.id])})
+
+# --------- (Optionnel) Détail réunion, utilisé par les liens "Voir" ---------
+@login_required
 def view_meeting(request, meeting_id: int):
-    """
-    Page détail d'une réunion :
-    - Infos (titre, date, heure, statut)
-    - Participants
-    - Audios (liste + durée totale)
-    - Transcription / Résumé / Rapport si existants
-    Accès : créateur OU participant.
-    """
-    meeting = get_object_or_404(Reunion.objects.select_related("utilisateur"), id=meeting_id)
-
-    # Permission : créateur ou participant
-    is_owner = (meeting.utilisateur_id == request.user.id)
-    is_participant = meeting.participants.filter(id=request.user.id).exists()
+    m = get_object_or_404(Reunion.objects.select_related("utilisateur"), id=meeting_id)
+    is_owner = (m.utilisateur_id == request.user.id)
+    is_participant = m.participants.filter(id=request.user.id).exists()
     if not (is_owner or is_participant or request.user.is_superuser):
-        return HttpResponseForbidden("Vous n'avez pas accès à cette réunion.")
+        return HttpResponseForbidden("Accès interdit.")
 
-    # Audios & durée totale (en heures)
-    audios = meeting.audios.all().order_by("-id")  # related_name="audios"
+    audios = m.audios.all().order_by("-id")
     total_seconds = audios.aggregate(s=Sum("duree")).get("s") or 0
     total_hours = round(total_seconds / 3600, 2)
 
-    # Liens 1-1 : transcription -> résumé -> rapport (si présents)
-    transcription = getattr(meeting, "transcription", None)
+    transcription = getattr(m, "transcription", None)
     resume = getattr(transcription, "resume", None) if transcription else None
     rapport = getattr(resume, "rapport", None) if resume else None
 
-    ctx = {
-        "meeting": meeting,
+    return render(request, "HTML/meeting_detail.html", {
+        "meeting": m,
         "is_owner": is_owner,
-        "participants": meeting.participants.all(),
+        "participants": m.participants.all(),
         "audios": audios,
         "total_audio_seconds": total_seconds,
         "total_audio_hours": total_hours,
         "transcription": transcription,
         "resume": resume,
         "rapport": rapport,
-    }
-    return render(request, "HTML/meeting_detail.html", ctx)
+    })
 
 #view reunions 
 
@@ -728,27 +789,90 @@ from tempfile import NamedTemporaryFile
 import os
 
 # ------- Rapport (DOCX) -------
+# meetings/views.py
+import os
+from tempfile import NamedTemporaryFile
+
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.core.files import File
+from django.http import FileResponse, HttpResponseForbidden, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils import timezone
+
+from docx import Document
+from docx.shared import Inches
+
+from .models import Reunion, Transcription, Resume, Rapport
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+def _can_view(reunion, user):
+    return (
+        reunion.utilisateur_id == user.id
+        or reunion.participants.filter(id=user.id).exists()
+        or user.is_superuser
+    )
+@login_required
+def meeting_report_view(request, pk):
+    r = get_object_or_404(Reunion.objects.select_related("utilisateur"), pk=pk)
+    if not _can_view(r, request.user):
+        return HttpResponseForbidden("Accès refusé.")
+
+    transcription = getattr(r, "transcription", None)
+    resume = getattr(transcription, "resume", None) if transcription else None
+    audios = r.audios.all() if hasattr(r, "audios") else []
+    total_seconds = sum(getattr(a, "duree", 0) for a in audios)
+    total_hours = round(total_seconds / 3600, 2)
+
+    # Si tu as un modèle Decision, remplace par ta vraie requête
+    decisions = getattr(r, "decisions", None)
+
+    ctx = {
+        "reunion": r,
+        "participants": r.participants.all(),
+        "transcription": transcription,
+        "resume": resume,
+        "decisions": decisions,
+        "audios": audios,
+        "total_audio_hours": total_hours,
+        "now": timezone.now(),
+        "generate_url": reverse("generate_report", args=[r.id]),
+    }
+    return render(request, "HTML/meeting_report.html", ctx)
 @login_required
 def generate_report(request, reunion_id: int):
     """
-    Crée un rapport DOCX avec infos réunion + résumé + transcription, puis l'attache à Rapport.fichier.
-    Nécessite `python-docx`:  pip install python-docx
+    Génère un DOCX avec infos réunion + résumé + transcription.
+    Nécessite: pip install python-docx
     """
-    
+    r = get_object_or_404(Reunion.objects.select_related("utilisateur"), pk=reunion_id)
 
-    reunion = get_object_or_404(Reunion, pk=reunion_id, utilisateur=request.user)
-    tr = getattr(reunion, "transcription", None)
-    rs = getattr(tr, "resume", None) if tr else None
+    if not _can_view(r, request.user):
+        return HttpResponseForbidden("Accès refusé.")
 
-    if not tr:
+    tr = getattr(r, "transcription", None)
+    if not tr or not (tr.text_transcrit or "").strip():
         messages.error(request, "Aucune transcription enregistrée pour cette réunion.")
-        return redirect("transcription_page", reunion_id=reunion.id)
+        return redirect("transcription", r.id)  # adapte le nom d'URL si besoin
 
+    rs = getattr(tr, "resume", None)
+    if not rs:
+        # ⚠️ Important: créer le résumé AVANT de créer le rapport
+        rs = Resume.objects.create(
+            transcription=tr,
+            text_resume="(Résumé non fourni — à compléter)",
+            langue=getattr(tr, "langue", "fr") or "fr",
+        )
+
+    # ------- DOCX -------
     doc = Document()
     doc.add_heading("Rapport de réunion", level=1)
 
-    # (Optionnel) logo d'entreprise
-    # place un logo dans settings.MEDIA_ROOT / 'logo.png' par ex
+    # Logo optionnel
     logo_path = os.path.join(getattr(settings, "MEDIA_ROOT", ""), "logo.png")
     if os.path.exists(logo_path):
         try:
@@ -756,54 +880,46 @@ def generate_report(request, reunion_id: int):
         except Exception:
             pass
 
-    # Meta
-    doc.add_paragraph(f"Titre : {reunion.titre}")
-    doc.add_paragraph(f"Date : {reunion.date_r.strftime('%d/%m/%Y')} à {reunion.heure_r.strftime('%H:%M')}")
-    doc.add_paragraph(f"Statut : {reunion.get_status_display()}")
+    # Métadonnées
+    doc.add_paragraph(f"Titre : {r.titre}")
+    doc.add_paragraph(f"Date : {r.date_r.strftime('%d/%m/%Y')} à {r.heure_r.strftime('%H:%M')}")
+    doc.add_paragraph(f"Statut : {r.get_status_display()}")
 
     # Participants
-    if reunion.participants.exists():
-        doc.add_paragraph("Participants :", style='List Bullet')
-        for u in reunion.participants.all():
-            doc.add_paragraph(f"- {u.get_full_name() or u.username}", style='List Bullet')
+    if r.participants.exists():
+        doc.add_heading("Participants", level=2)
+        for u in r.participants.all():
+            doc.add_paragraph(u.get_full_name() or u.username, style="List Bullet")
 
     # Résumé
-    if rs:
-        doc.add_heading("Résumé", level=2)
-        doc.add_paragraph(rs.text_resume)
+    doc.add_heading("Résumé", level=2)
+    doc.add_paragraph(rs.text_resume or "(non disponible)")
+
+    # Décisions (si tu as un modèle et des données)
+    decisions = getattr(r, "decisions", None)
+    if decisions:
+        doc.add_heading("Décisions", level=2)
+        # adapte selon ta structure
+        for d in decisions.all() if hasattr(decisions, "all") else decisions:
+            doc.add_paragraph(f"• {getattr(d, 'titre', str(d))}", style="List Bullet")
 
     # Transcription
     doc.add_heading("Transcription", level=2)
     doc.add_paragraph(tr.text_transcrit)
 
-    # Sauvegarde temporaire puis attach à Rapport.fichier
+    # ------- Sauvegarde et attachement -------
     with NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
         doc.save(tmp.name)
         tmp.flush()
         tmp_path = tmp.name
 
-    # upsert Rapport
-    rp, created = Rapport.objects.get_or_create(resume=rs if rs else None)
-    # s'il n'y a pas de résumé, on peut lier un rapport "basé uniquement sur transcription"
-    if not rs:
-        # pour respecter ton schéma (rapport -> OneToOne(Resume)), on peut créer un résumé minimal :
-        rs = Resume.objects.create(transcription=tr, text_resume="(Résumé non fourni)")
-        rp, created = Rapport.objects.get_or_create(resume=rs)
-
+    # Attache au Rapport (OneToOne avec Resume)
+    rapport, _ = Rapport.objects.get_or_create(resume=rs)
+    filename = f"rapport_reunion_{r.id}_{timezone.now().strftime('%Y%m%d_%H%M')}.docx"
     with open(tmp_path, "rb") as f:
-        rp.fichier.save(f"rapport_reunion_{reunion.id}.docx", File(f), save=True)
+        rapport.fichier.save(filename, File(f), save=True)
 
     os.remove(tmp_path)
-    messages.success(request, "Rapport généré et attaché à la réunion.")
-    return redirect("view_meeting", meeting_id=reunion.id)
-from datetime import datetime
-from django.contrib.auth.decorators import login_required
-from django.shortcuts import get_object_or_404, render, redirect
-from django.http import JsonResponse, HttpResponseForbidden
-from django.utils import timezone
-from django.contrib import messages
-from django.core.files.base import ContentFile
-from django.core.files import File
-from django.conf import settings
 
-from .models import Reunion, Transcription, Resume, Rapport
+    # Téléchargement direct
+    return FileResponse(rapport.fichier.open("rb"), as_attachment=True, filename=filename)

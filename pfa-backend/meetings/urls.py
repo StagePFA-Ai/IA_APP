@@ -17,6 +17,14 @@ urlpatterns = [
     path("calendar/meeting/<int:pk>/", views.calendar_meeting_info, name="calendar_meeting_info"),
     path("calendar/meeting/update/", views.calendar_meeting_update, name="calendar_meeting_update"),
     path("calendar/start/", views.calendar_start, name="calendar_start"),
+    path("calendar/day/",views.calendar_day, name="calendar_day"),
+    
+
+
+
+
+
+
 
     path("meetings/<int:meeting_id>/view/", views.view_meeting, name="view_meeting"),
     path('meetings/', views.meetings_page, name='meetings'),
@@ -30,7 +38,9 @@ urlpatterns = [
  
     path("transcription/<int:reunion_id>/", views.transcription_page, name="transcription"),
     path("transcription/<int:reunion_id>/save/", views.save_transcription, name="save_transcription"),
-    path("transcription/<int:reunion_id>/rapport/", views.generate_report, name="generate_report"),
+    
+    path("transcription/<int:pk>/report/preview/", views.meeting_report_view, name="meeting_report_view"),
+    path("transcription/<int:reunion_id>/report/docx/", views.generate_report, name="generate_report"),
   #'transcription/<int:meeting_id>/
    
  
