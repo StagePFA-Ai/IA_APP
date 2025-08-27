@@ -11,15 +11,8 @@ from channels.auth import AuthMiddlewareStack
 import django
 import meetings.routing as app
 
-
-
-
-
-
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'meeting_project.settings')
-
 django_asgi_app = get_asgi_application()
-
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": AuthMiddlewareStack(URLRouter(app.websocket_urlpatterns)),

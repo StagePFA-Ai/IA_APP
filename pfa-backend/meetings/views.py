@@ -1,160 +1,89 @@
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse, HttpResponse
-from django.db.models import Sum, Count
-from datetime import datetime, timedelta
-from .models import  Reunion, Audio, Transcription, Resume, Rapport
-from .forms import LoginForm, ReunionForm, AudioUploadForm
-from django.contrib.auth.forms import AuthenticationForm
-import json
-from django.urls import reverse, NoReverseMatch
-from django.db.models import Count
-from django.db.models.functions import TruncMonth
-import datetime
-# meetings/views_meeting.py
-from django.contrib.auth.decorators import login_required
-from django.db.models import Sum
-from django.http import HttpResponseForbidden
-from django.shortcuts import get_object_or_404, render
-from .models import Reunion
-from django.utils.dateparse import parse_date
-from datetime import date,time
-from django.urls import reverse
-import re
-from django.conf import settings as dj_settings
-from django.utils import timezone
+# views.py
+# =============================================================================
+# MeetingAI — Vues Django (corrigées & commentées)
+# Politique d'accès :
+#   - Utilisateur : accès à ses données (créateur/participant).
+#   - Admin (staff/superuser) : statistiques globales uniquement (pas de contenu).
+# =============================================================================
+
+from __future__ import annotations
+import os
+from tempfile import NamedTemporaryFile
+from datetime import date as ddate, datetime, time as dtime
+
+from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth.models import User
-from datetime import date, datetime, time as dtime
-from datetime import datetime, date, timedelta
+from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.decorators import login_required
-from django.db.models import Q
-from django.http import JsonResponse, HttpResponseBadRequest
-from django.shortcuts import render, get_object_or_404
-from django.utils import timezone
-from django.core.paginator import Paginator
-# la premier page 
-def home(request):
-    # page publique : pas besoin d'auth
-    return render(request, "HTML/home.html")
-
-# Login view
-def login_view(request):
-    if request.method == "POST":
-        username = request.POST.get("username", "").strip()
-        password = request.POST.get("password", "")
-        user = authenticate(request, username=username, password=password)
-        if user and user.is_active:
-            login(request, user)
-            return redirect(request.GET.get("next") or "dashboard")
-        messages.error(request, "Identifiants incorrects")
-    return render(request, "HTML/login.html")
-
-def logout_view(request):
-    logout(request)
-    return redirect("login")
-
-@login_required
-# Dashboard view
-def _month_add(d: date, months: int) -> date:
-    y = d.year + ((d.month - 1 + months) // 12)
-    m = (d.month - 1 + months) % 12 + 1
-    return date(y, m, 1)
-
-@login_required
-def dashboard(request):
-    
-    user = request.user
-    today = timezone.localdate()
-
-    meetings_qs = Reunion.objects.filter(utilisateur=user)
-
-    total_meetings = meetings_qs.count()
-
-    total_seconds = (
-        Audio.objects.filter(reunion__utilisateur=user)
-        .aggregate(s=Sum("duree"))
-        .get("s") or 0
-    )
-    heures = round(total_seconds / 3600, 1)
-
-    resumes_count = Resume.objects.filter(
-        transcription__reunion__utilisateur=user
-    ).count()
-
-    # ⚠️ Valeurs de status : adapte à TES choices exacts.
-    # Si ton modèle a 'planifier' (et pas 'planifie'), mets 'planifier'.
-    actions = meetings_qs.filter(
-        status__in=["planifie", "en_cours"],  # ou ["planifier","en_cours"]
-        date_r__gte=today
-    ).count()
-
-    kpis = {
-        "total_meetings": total_meetings,
-        "heures": heures,
-        "Résumés": resumes_count,
-        "actions": actions,
-    }
-
-    meetings_by_month = (
-        Reunion.objects
-        .annotate(month=TruncMonth('date_r'))
-        .values('month')
-        .annotate(count=Count('id'))
-        .order_by('month')
-    )
-    chart1_labels = [m['month'].strftime("%b %Y") for m in meetings_by_month]
-    chart1_data = [m['count'] for m in meetings_by_month]
-    recent_meetings = list(
-        meetings_qs.order_by("-date_r", "-heure_r")[:8]
-    )
-    ctx = {
-        "kpis": kpis,
-        "chart1_labels": chart1_labels,
-        "chart1_data": chart1_data,
-         "recent_meetings": recent_meetings
-    }
-    return render(request, "HTML/dashboard.html", ctx)
-# Calendar view
-# meetings/views_calendar.py
-from datetime import date as ddate, time as dtime
-from django.contrib.auth.decorators import login_required
-from django.contrib.auth import get_user_model
-from django.db.models import Q, Sum
-from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
-from django.shortcuts import get_object_or_404, render
-from django.urls import reverse
+from django.db import IntegrityError, transaction
+from django.db.models import Q, Sum, Count
+from django.db.models.functions import TruncMonth
+from django.http import (
+    FileResponse,
+    HttpResponse,
+    HttpResponseBadRequest,
+    HttpResponseForbidden,
+    JsonResponse,
+)
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.core.paginator import Paginator
 
+from docx import Document
+from docx.shared import Inches
 
-from .models import Reunion  # adapte si le modèle est ailleurs
+from .models import Reunion, Audio, Transcription, Resume, Rapport
 
 User = get_user_model()
 
-# --------- Constantes ---------
+# =============================================================================
+# Constantes statut — harmonisées (adaptez si vos choices diffèrent)
+# =============================================================================
 STATUS_LABELS = {
-    "planifie": "Planifié",
-    "en_cours":  "En cours",
-    "termine":  "Terminé",
-    "annule":   "Annulé",
-    "reporte":  "Reporté",
+    "planifier": "Planifié",
+    "en_cours": "En cours",
+    "terminer": "Terminé",
+    "annuler": "Annulé",
+    "reporter": "Reporté",
 }
 
 STATUS_COLORS = {
-    "planifie": "#2563eb",  # bleu
-    "en_cours":  "#10b981",  # vert
-    "termine":  "#6b7280",  # gris
-    "annule":   "#ef4444",  # rouge
-    "reporte":  "#f59e0b",  # orange
+    "planifier": "#2563eb",  # bleu
+    "en_cours": "#10b981",   # vert
+    "terminer": "#6b7280",   # gris
+    "annuler": "#ef4444",    # rouge
+    "reporter": "#f59e0b",   # orange
 }
 
-# --------- Helpers ---------
+# =============================================================================
+# Helpers rôles & permissions
+# =============================================================================
+def is_admin(user) -> bool:
+    """Admin = staff OU superuser."""
+    return bool(user and (user.is_staff or user.is_superuser))
+
+
+def forbid_admin_on_meetings(request) -> bool:
+    """
+    Bloque l'accès 'réunions/calendrier' aux administrateurs :
+    l'admin n'a qu'une vision statistique, pas de contenu.
+    """
+    if is_admin(request.user):
+        messages.info(
+            request,
+            "Accès réservé aux utilisateurs. En tant qu'administrateur, vous avez une vue statistiques uniquement.",
+        )
+        return True
+    return False
+
+
 def _today_local():
     return timezone.localdate()
 
-def _parse_hhmm(s: str):
+
+def _parse_hhmm(s: str | None):
     """'HH:MM' -> datetime.time | None"""
     try:
         h, m = (s or "").split(":")
@@ -162,39 +91,163 @@ def _parse_hhmm(s: str):
     except Exception:
         return None
 
-def _scope_user(user):
+
+def _scope_user(user: User) -> Q: # type: ignore
     """Réunions visibles par l'utilisateur : créateur OU participant."""
     return Q(utilisateur=user) | Q(participants=user)
 
-def _can_start(m: Reunion) -> bool:
-    """Démarrage autorisé uniquement le jour J si statut 'planifier'."""
-    return m.status == "planifier" and m.date_r == _today_local()
 
-def _can_resume(m: Reunion) -> bool:
-    """Rejoindre la transcription si réunion en cours le jour J."""
-    return m.status == "en_cours" and m.date_r == _today_local()
+def _can_view_meeting(reunion: Reunion, user: User) -> bool: # type: ignore
+    """
+    Droits d'accès au contenu d'une réunion :
+    - créateur
+    - OU participant
 
-def _can_edit(m: Reunion, user: User) -> bool: # type: ignore
-    """Le créateur peut modifier :
+    ⚠️ Pas de passe-droit admin : l'admin ne lit pas le contenu des réunions d'autrui.
+    """
+    return reunion.utilisateur_id == user.id or reunion.participants.filter(id=user.id).exists()
+
+
+def _can_edit(reunion: Reunion, user: User) -> bool: # type: ignore
+    """Seul le créateur peut modifier :
        - si réunion aujourd'hui ou future
-       - si reportée (pour replanifier)"""
-    if m.utilisateur_id != user.id:
+       - si 'reporter' (pour replanifier)
+    """
+    if reunion.utilisateur_id != user.id:
         return False
-    if m.status == "reporter":
+    if reunion.status == "reporter":
         return True
-    return m.date_r >= _today_local()
+    return reunion.date_r >= _today_local()
+
+
+def _can_start(reunion: Reunion) -> bool:
+    """Démarrage autorisé uniquement le jour J si statut 'planifier'."""
+    return reunion.status == "planifier" and reunion.date_r == _today_local()
+
+
+def _can_resume(reunion: Reunion) -> bool:
+    """Rejoindre la transcription si réunion en cours le jour J."""
+    return reunion.status == "en_cours" and reunion.date_r == _today_local()
+
 
 def _autopostpone_overdue(user: User): # type: ignore
     """Marque 'reporter' les réunions du user dépassées restées 'planifier'."""
     today = _today_local()
     Reunion.objects.filter(utilisateur=user, status="planifier", date_r__lt=today).update(status="reporter")
 
-# --------- Vues Calendrier ---------
+
+# =============================================================================
+# Accueil / Auth
+# =============================================================================
+#la 1er page de l'application 
+def home(request):
+    return render(request, "HTML/home.html")
+
+#page login 
+def login_view(request):
+    """Login simple avec message d'erreur et redirection vers dashboard."""
+    if request.method == "POST":
+        username = (request.POST.get("username") or "").strip()
+        password = request.POST.get("password") or ""
+        user = authenticate(request, username=username, password=password)
+        if user and user.is_active:
+            login(request, user)
+            return redirect(request.GET.get("next") or "dashboard")
+        messages.error(request, "Identifiants incorrects")
+    return render(request, "HTML/login.html")
+#page logout
+def logout_view(request):
+    """Logout + retour page de connexion."""
+    logout(request)
+    return redirect("login")
+
+
+# =============================================================================
+# Dashboard : stats globales (admin) vs stats personnelles (utilisateur)
+# =============================================================================
+#view dashboard
+@login_required
+def dashboard(request):
+    user = request.user
+    today = _today_local()
+
+    # --- ADMIN : statistiques globales uniquement (aucune liste détaillée) ---
+    if is_admin(user):
+        all_meetings = Reunion.objects.all()
+        total_meetings = all_meetings.count()
+        total_seconds = Audio.objects.aggregate(s=Sum("duree")).get("s") or 0
+        heures = round(total_seconds / 3600, 1)
+        resumes_count = Resume.objects.count()
+
+        # Histogramme global par mois
+        meetings_by_month = (
+            Reunion.objects
+            .annotate(month=TruncMonth('date_r'))
+            .values('month')
+            .annotate(count=Count('id'))
+            .order_by('month')
+        )
+        chart1_labels = [m['month'].strftime("%b %Y") for m in meetings_by_month]
+        chart1_data = [m['count'] for m in meetings_by_month]
+
+        ctx = {
+            "kpis": {
+                "total_meetings": total_meetings,
+                "heures": heures,
+                "Résumés": resumes_count,
+                "actions": 0,  # pas d’actions ciblées en mode admin
+            },
+            "chart1_labels": chart1_labels,
+            "chart1_data": chart1_data,
+            "recent_meetings": [],  # on n’affiche pas de contenu détaillé à l’admin
+            "admin_mode": True,
+        }
+        return render(request, "HTML/dashboard.html", ctx)
+
+    # --- UTILISATEUR : stats personnelles filtrées à son scope ---
+    meetings_qs = Reunion.objects.filter(_scope_user(user)).distinct()
+
+    total_meetings = meetings_qs.count()
+    total_seconds = Audio.objects.filter(reunion__in=meetings_qs).aggregate(s=Sum("duree")).get("s") or 0
+    heures = round(total_seconds / 3600, 1)
+    resumes_count = Resume.objects.filter(transcription__reunion__in=meetings_qs).count()
+
+    actions = meetings_qs.filter(status__in=["planifier", "en_cours"], date_r__gte=today).count()
+
+    # Histogramme personnel par mois
+    meetings_by_month = (
+        meetings_qs.filter(_scope_user(user))
+        .annotate(month=TruncMonth('date_r'))
+        .values('month')
+        .annotate(count=Count('id'))
+        .order_by('month')
+    )
+    chart1_labels = [m['month'].strftime("%b %Y") for m in meetings_by_month]
+    chart1_data = [m['count'] for m in meetings_by_month]
+    recent_meetings = list(meetings_qs.order_by("-date_r", "-heure_r")[:8])
+
+    ctx = {
+        "kpis": {
+            "total_meetings": total_meetings,
+            "heures": heures,
+            "Résumés": resumes_count,
+            "actions": actions,
+        },
+        "chart1_labels": chart1_labels,
+        "chart1_data": chart1_data,
+        "recent_meetings": recent_meetings,
+        "admin_mode": False,
+    }
+    return render(request, "HTML/dashboard.html", ctx)
+# =============================================================================
+# Calendrier — interdit aux admins (stats only)
+# =============================================================================
 @login_required
 def calendar(request):
-    """Page calendrier (colonne droite préremplie avec aujourd’hui)."""
+    """Page calendrier (colonne droite préremplie avec aujourd'hui)."""
+    if forbid_admin_on_meetings(request):
+        return redirect("dashboard")
     selected_date = parse_date(request.GET.get("date") or "") or _today_local()
-
     meetings_on_date = (
         Reunion.objects
         .filter(_scope_user(request.user), date_r=selected_date)
@@ -204,7 +257,6 @@ def calendar(request):
         .distinct()
     )
 
-    # auto-report “planifier” passées
     _autopostpone_overdue(request.user)
 
     return render(request, "HTML/calendar.html", {
@@ -212,29 +264,35 @@ def calendar(request):
         "meetings_on_date": meetings_on_date,
     })
 
+
 @login_required
 def calendar_events(request):
-    """Événements pour FullCalendar (toutes réunions visibles)."""
+    """Événements pour FullCalendar (toutes réunions visibles de l'utilisateur)."""
+    if forbid_admin_on_meetings(request):
+        return JsonResponse({"detail": "Admin: stats only."}, status=403)
+
     qs = (
         Reunion.objects
         .filter(_scope_user(request.user))
         .select_related("utilisateur")
         .distinct()
     )
-    events = []
-    for r in qs:
-        events.append({
-            "id": r.id,
-            "title": r.titre,
-            "start": f"{r.date_r.isoformat()}T{r.heure_r.strftime('%H:%M')}",
-            "url": reverse("view_meeting", args=[r.id]),
-            "color": STATUS_COLORS.get(r.status, "#2563eb"),
-        })
+    events = [{
+        "id": r.id,
+        "title": r.titre,
+        "start": f"{r.date_r.isoformat()}T{r.heure_r.strftime('%H:%M')}",
+        "url": reverse("view_meeting", args=[r.id]),
+        "color": STATUS_COLORS.get(r.status, "#2563eb"),
+    } for r in qs]
     return JsonResponse(events, safe=False)
+
 
 @login_required
 def calendar_day(request):
     """Réunions d’un jour (pour remplir la colonne de droite)."""
+    if forbid_admin_on_meetings(request):
+        return JsonResponse({"detail": "Admin: stats only."}, status=403)
+
     try:
         day_str = request.GET.get("date", "")
         d = parse_date(day_str) or _today_local()
@@ -252,12 +310,9 @@ def calendar_day(request):
         .distinct()
     )
 
-    payload = {
-        "date": d.isoformat(),
-        "meetings": []
-    }
+    payload = {"date": d.isoformat(), "meetings": []}
     for m in qs:
-        can_start  = _can_start(m)
+        can_start = _can_start(m)
         can_resume = _can_resume(m)
 
         if can_resume:
@@ -285,9 +340,13 @@ def calendar_day(request):
         })
     return JsonResponse(payload)
 
+
 @login_required
 def calendar_create(request):
     """Créer une réunion (modale ‘Nouvelle réunion’)."""
+    if forbid_admin_on_meetings(request):
+        return JsonResponse({"ok": False, "error": "Admin: stats only."}, status=403)
+
     if request.method != "POST":
         return HttpResponseBadRequest("Méthode non supportée")
 
@@ -307,14 +366,20 @@ def calendar_create(request):
     )
     return JsonResponse({"ok": True, "id": r.id})
 
+
 @login_required
 def calendar_meeting_info(request, pk: int):
     """Infos pour la modale 'Gérer' (droits + démarrer/rejoindre)."""
+    if forbid_admin_on_meetings(request):
+        return JsonResponse({"detail": "Admin: stats only."}, status=403)
+
     try:
-        m = (Reunion.objects
-             .select_related("utilisateur")
-             .prefetch_related("participants")
-             .get(Q(pk=pk) & _scope_user(request.user)))
+        m = (
+            Reunion.objects
+            .select_related("utilisateur")
+            .prefetch_related("participants")
+            .get(Q(pk=pk) & _scope_user(request.user))
+        )
     except Reunion.DoesNotExist:
         return HttpResponseBadRequest("Réunion introuvable ou non autorisée")
 
@@ -323,20 +388,16 @@ def calendar_meeting_info(request, pk: int):
         m.status = "reporter"
         m.save(update_fields=["status"])
 
-    can_start  = _can_start(m)
+    can_start = _can_start(m)
     can_resume = _can_resume(m)
-    can_edit   = _can_edit(m, request.user)
+    can_edit = _can_edit(m, request.user)
 
-    # Participants (tous les users affichés — adapte si besoin)
+    # Participants (tous les users affichés — adaptez au besoin)
     selected_ids = set(m.participants.values_list("id", flat=True))
     participants_all = []
     for u in User.objects.order_by("username").values("id", "username", "first_name", "last_name"):
         label = (f"{u['first_name']} {u['last_name']}".strip()) or u["username"]
-        participants_all.append({
-            "id": u["id"],
-            "label": label,
-            "selected": u["id"] in selected_ids,
-        })
+        participants_all.append({"id": u["id"], "label": label, "selected": u["id"] in selected_ids})
 
     if can_resume:
         hint = "Réunion en cours — vous pouvez la rejoindre."
@@ -365,9 +426,13 @@ def calendar_meeting_info(request, pk: int):
     }
     return JsonResponse(data)
 
+
 @login_required
 def calendar_meeting_update(request):
     """Met à jour date/heure/participants (créateur uniquement)."""
+    if forbid_admin_on_meetings(request):
+        return JsonResponse({"ok": False, "error": "Admin: stats only."}, status=403)
+
     if request.method != "POST":
         return HttpResponseBadRequest("Méthode invalide")
 
@@ -401,9 +466,13 @@ def calendar_meeting_update(request):
     m.save()
     return JsonResponse({"ok": True})
 
+
 @login_required
 def calendar_start(request):
-    """Démarrage d’une réunion (jour J & statut planifié)."""
+    """Démarrage d’une réunion (jour J & statut planifier)."""
+    if forbid_admin_on_meetings(request):
+        return JsonResponse({"ok": False, "error": "Admin: stats only."}, status=403)
+
     if request.method != "POST":
         return HttpResponseBadRequest("Méthode invalide")
 
@@ -414,7 +483,10 @@ def calendar_start(request):
         return JsonResponse({"ok": False, "error": "Réunion introuvable"}, status=400)
 
     if not _can_start(m):
-        return JsonResponse({"ok": False, "error": "Le démarrage est autorisé uniquement le jour J pour une réunion planifiée."}, status=403)
+        return JsonResponse(
+            {"ok": False, "error": "Le démarrage est autorisé uniquement le jour J pour une réunion planifiée."},
+            status=403,
+        )
 
     if m.status != "en_cours":
         m.status = "en_cours"
@@ -422,13 +494,18 @@ def calendar_start(request):
 
     return JsonResponse({"ok": True, "redirect": reverse("transcription", args=[m.id])})
 
-# --------- (Optionnel) Détail réunion, utilisé par les liens "Voir" ---------
+
+# =============================================================================
+# Détail / Historique (interdit aux admins)
+# =============================================================================
 @login_required
 def view_meeting(request, meeting_id: int):
+    """Fiche détaillée d’une réunion (créateur/participant uniquement)."""
+    if forbid_admin_on_meetings(request):
+        return HttpResponseForbidden("Accès interdit.")
+
     m = get_object_or_404(Reunion.objects.select_related("utilisateur"), id=meeting_id)
-    is_owner = (m.utilisateur_id == request.user.id)
-    is_participant = m.participants.filter(id=request.user.id).exists()
-    if not (is_owner or is_participant or request.user.is_superuser):
+    if not _can_view_meeting(m, request.user):
         return HttpResponseForbidden("Accès interdit.")
 
     audios = m.audios.all().order_by("-id")
@@ -441,7 +518,7 @@ def view_meeting(request, meeting_id: int):
 
     return render(request, "HTML/meeting_detail.html", {
         "meeting": m,
-        "is_owner": is_owner,
+        "is_owner": (m.utilisateur_id == request.user.id),
         "participants": m.participants.all(),
         "audios": audios,
         "total_audio_seconds": total_seconds,
@@ -451,7 +528,6 @@ def view_meeting(request, meeting_id: int):
         "rapport": rapport,
     })
 
-#view reunions 
 
 @login_required
 def meetings_page(request):
@@ -460,18 +536,22 @@ def meetings_page(request):
     avec recherche plein texte (titre, transcription, résumé), filtres statut / dates,
     et pagination.
     """
+    if forbid_admin_on_meetings(request):
+        return redirect("dashboard")
+
     user = request.user
 
-    # Base : réunions où l’utilisateur est créateur OU participant
-    qs = (Reunion.objects
-          .filter(Q(utilisateur=user) | Q(participants=user))
-          .distinct())
+    qs = (
+        Reunion.objects
+        .filter(_scope_user(user))
+        .distinct()
+    )
 
     # --- Filtres GET ---
     q = (request.GET.get("q") or "").strip()
-    status = (request.GET.get("status") or "").strip()       # planifier, en_cours, terminer, annuler, reporter
+    status = (request.GET.get("status") or "").strip()  # planifier, en_cours, terminer, annuler, reporter
     dfrom = parse_date(request.GET.get("date_from") or "")
-    dto   = parse_date(request.GET.get("date_to") or "")
+    dto = parse_date(request.GET.get("date_to") or "")
 
     if q:
         qs = qs.filter(
@@ -480,7 +560,7 @@ def meetings_page(request):
             Q(transcription__resume__text_resume__icontains=q)
         )
 
-    if status in {"planifier","en_cours","terminer","annuler","reporter"}:
+    if status in {"planifier", "en_cours", "terminer", "annuler", "reporter"}:
         qs = qs.filter(status=status)
 
     if dfrom:
@@ -488,14 +568,12 @@ def meetings_page(request):
     if dto:
         qs = qs.filter(date_r__lte=dto)
 
-    # Tri récent d'abord
-    qs = (qs.select_related("utilisateur",
-                            "transcription",
-                            "transcription__resume")  # pour accès direct au résumé
-            .prefetch_related("participants", "audios")     # pour boucler sans requêtes N+1
-            .order_by("-date_r", "-heure_r", "-id"))
+    qs = (
+        qs.select_related("utilisateur", "transcription", "transcription__resume")
+          .prefetch_related("participants", "audios")
+          .order_by("-date_r", "-heure_r", "-id")
+    )
 
-    # Pagination
     paginator = Paginator(qs, 8)  # 8 cartes par page
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -508,7 +586,11 @@ def meetings_page(request):
         "date_to": dto.isoformat() if dto else "",
     }
     return render(request, "HTML/meetings.html", ctx)
-#view seeting
+
+
+# =============================================================================
+# Paramètres (session) — accessible à tous (admin inclus si nécessaire)
+# =============================================================================
 @login_required
 def settings_page(request):
     """
@@ -516,8 +598,7 @@ def settings_page(request):
     Clés session:
       user_settings = {
         auto_record: bool,
-        recording_consent: bool,     # autoriser enregistrement audio local
-        disable_reunions: bool,      # désactiver tout le module Réunions/Calendrier
+        recording_consent: bool,
         doc_notes: str,
       }
     """
@@ -525,9 +606,8 @@ def settings_page(request):
 
     if request.method == "POST":
         def asbool(v): return str(v).lower() in {"1", "true", "on", "yes", "oui"}
-        sess["auto_record"]       = asbool(request.POST.get("auto_record"))
+        sess["auto_record"] = asbool(request.POST.get("auto_record"))
         sess["recording_consent"] = asbool(request.POST.get("recording_consent"))
-        
 
         request.session["user_settings"] = sess
         request.session.modified = True
@@ -536,9 +616,8 @@ def settings_page(request):
 
     ctx = {
         "settings": {
-            "auto_record":       bool(sess.get("auto_record", False)),
+            "auto_record": bool(sess.get("auto_record", False)),
             "recording_consent": bool(sess.get("recording_consent", True)),
-           
         },
         "user_info": request.user,
         # Texte affiché
@@ -555,50 +634,49 @@ def settings_page(request):
             "Persistance : Audio, Transcription, Résumé, Rapport (suivant permissions).",
         ],
         # Chemins purement informatifs (lecture seule)
-        "media_root": dj_settings.MEDIA_ROOT,
+        "media_root": settings.MEDIA_ROOT,
         "audio_upload_path": "uploads/audio/",
         "reports_upload_path": "uploads/rapports/",
         "files_upload_path": "uploads/",
     }
     return render(request, "HTML/settings.html", ctx)
-# nouvelle reunion view
+
+
+# =============================================================================
+# Création / modification réunions (utilisateur uniquement)
+# =============================================================================
+@login_required
 def reunion_form(request, reunion_id=None):
-    """
-    Affiche le formulaire :
-      - création si reunion_id est None
-      - modification sinon
-    Contexte attendu par le template : reunion, utilisateurs
-    """
+    """Affiche le formulaire : création si None, sinon modification (créateur only)."""
+    if forbid_admin_on_meetings(request):
+        return redirect("dashboard")
+
     reunion = None
     if reunion_id:
         reunion = get_object_or_404(Reunion, pk=reunion_id)
-        # sécurité : seul le créateur peut modifier
         if reunion.utilisateur != request.user:
             messages.error(request, "Vous n'êtes pas autorisé à modifier cette réunion.")
             return redirect("meetings")
 
-    # liste des utilisateurs proposés comme participants
-    utilisateurs = User.objects.all().order_by("username")
+    utilisateurs = User.objects.all().order_by("username")  # pour <select>
+    return render(request, "HTML/nouvelle_reunion.html", {"reunion": reunion, "utilisateurs": utilisateurs})
 
-    return render(
-        request,
-        "HTML/nouvelle_reunion.html",
-        {"reunion": reunion, "utilisateurs": utilisateurs},
-    )
 
-from django.db import IntegrityError, transaction
 @login_required
 def creer_reunion(request):
+    """Créer une réunion (bouton 'enregistrer' ou 'demarrer')."""
+    if forbid_admin_on_meetings(request):
+        return redirect("dashboard")
+
     if request.method == "POST":
         titre = (request.POST.get("titre") or "").strip()
         date_str = request.POST.get("date_r")
         heure_str = request.POST.get("heure_r")
         action = request.POST.get("action")  # "enregistrer" ou "demarrer"
 
-        # validation basique
         if not titre or not date_str or not heure_str:
             messages.error(request, "Veuillez renseigner le titre, la date et l’heure.")
-            return redirect("creer_reunion")  # ou renvoyer le formulaire
+            return redirect("creer_reunion")
 
         try:
             date_r = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -607,7 +685,7 @@ def creer_reunion(request):
             messages.error(request, "Format de date/heure invalide.")
             return redirect("creer_reunion")
 
-        # 1) Prévenir le doublon avant insert
+        # Unicité basique (évite doublon immédiat)
         conflict = Reunion.objects.filter(
             utilisateur=request.user,
             date_r=date_r,
@@ -615,13 +693,9 @@ def creer_reunion(request):
             titre=titre,
         ).exists()
         if conflict:
-            messages.error(
-                request,
-                "Une réunion avec ce titre, cette date et cette heure existe déjà pour votre compte."
-            )
+            messages.error(request, "Une réunion identique existe déjà pour votre compte.")
             return redirect("creer_reunion")
 
-        # 2) Création + ceinture et bretelles avec try/except
         try:
             with transaction.atomic():
                 reunion = Reunion.objects.create(
@@ -629,15 +703,13 @@ def creer_reunion(request):
                     date_r=date_r,
                     heure_r=heure_r,
                     utilisateur=request.user,
-                    # status par défaut = 'planifier' selon ton modèle
+                    status="planifier",
                 )
 
-                # participants (liste d'IDs)
                 p_ids = request.POST.getlist("participants")
                 if p_ids:
                     reunion.participants.set(User.objects.filter(id__in=p_ids))
 
-                # action : démarrer = passer en cours et rediriger vers transcription
                 if action == "demarrer":
                     reunion.status = "en_cours"
                     reunion.save(update_fields=["status"])
@@ -645,14 +717,12 @@ def creer_reunion(request):
                     return redirect("transcription", reunion_id=reunion.id)
 
             messages.success(request, "Réunion enregistrée.")
-            # Choisis où retourner (page réunions, calendrier, dashboard…)
             return redirect("meetings")
 
         except IntegrityError:
-            # Si malgré le .exists() on a un conflit (course), on gère proprement
             messages.error(
                 request,
-                "Conflit détecté : une réunion identique vient d’être créée. Réessayez avec un autre horaire ou un autre titre."
+                "Conflit détecté : une réunion identique vient d’être créée. Réessayez avec un autre horaire ou un autre titre.",
             )
             return redirect("creer_reunion")
 
@@ -663,19 +733,16 @@ def creer_reunion(request):
 
 @login_required
 def modifier_reunion(request, reunion_id):
-    """
-    Traite le POST de modification depuis le formulaire.
-    Actions possibles :
-      - modifier : met à jour les champs
-      - demarrer : met 'en_cours' et envoie vers transcription
-    """
+    """POST de modification. 'demarrer' passe la réunion en 'en_cours'."""
+    if forbid_admin_on_meetings(request):
+        return redirect("dashboard")
+
     reunion = get_object_or_404(Reunion, pk=reunion_id)
     if reunion.utilisateur != request.user:
         messages.error(request, "Vous n'êtes pas autorisé à modifier cette réunion.")
         return redirect("meetings")
 
     if request.method != "POST":
-        # si quelqu’un tente GET directement sur cette route, on renvoie le formulaire
         return redirect("reunion_modifier", reunion_id=reunion.id)
 
     titre = (request.POST.get("titre") or "").strip()
@@ -687,23 +754,15 @@ def modifier_reunion(request, reunion_id):
         messages.error(request, "Veuillez remplir tous les champs obligatoires.")
         return redirect("reunion_modifier", reunion_id=reunion.id)
 
-    # mise à jour
     reunion.titre = titre
     reunion.date_r = date_r
     reunion.heure_r = heure_r
 
-    # participants
     participants_ids = request.POST.getlist("participants")
     reunion.participants.set(User.objects.filter(id__in=participants_ids))
 
-    # action
     if action == "demarrer":
         reunion.status = "en_cours"
-    else:
-        # si on ne démarre pas explicitement, on laisse le statut tel quel
-        # (optionnel) si tu veux rebasculer en "planifier" lors d'une maj future :
-        # reunion.status = "planifier"
-        pass
 
     reunion.save()
 
@@ -717,21 +776,24 @@ def modifier_reunion(request, reunion_id):
     messages.success(request, "Réunion mise à jour.")
     return redirect("meetings")
 
+
 def reunion_nouvelle(request):
+    """Alias création."""
     return reunion_form(request, reunion_id=None)
 
 
-# view transcription
-# meetings/views.py
-
-from django.views.decorators.http import require_POST
-
-
+# =============================================================================
+# Transcription / Résumé (utilisateur uniquement)
+# =============================================================================
 @login_required
 def transcription_page(request, reunion_id: int):
-    reunion = get_object_or_404(Reunion, pk=reunion_id, utilisateur=request.user)
+    if forbid_admin_on_meetings(request):
+        return HttpResponseForbidden("Accès interdit.")
 
-    # objets existants (facultatif pour pré-remplir)
+    reunion = get_object_or_404(Reunion, pk=reunion_id)
+    if not _can_view_meeting(reunion, request.user):
+        return HttpResponseForbidden("Accès interdit.")
+
     transcription = getattr(reunion, "transcription", None)
     resume = getattr(transcription, "resume", None) if transcription else None
 
@@ -739,16 +801,22 @@ def transcription_page(request, reunion_id: int):
         "reunion": reunion,
         "transcription": transcription,
         "resume": resume,
-        "webrtc_ws_url": "/ws/transcription/",  # utilisé par ton template
+        "webrtc_ws_url": "/ws/transcription/",
     }
     return render(request, "HTML/transcription.html", ctx)
 
 
 @login_required
 def save_transcription(request, reunion_id: int):
+    if forbid_admin_on_meetings(request):
+        return JsonResponse({"ok": False, "error": "Admin: stats only."}, status=403)
+
     if request.method != "POST":
         return HttpResponseForbidden("Méthode non autorisée")
-    reunion = get_object_or_404(Reunion, pk=reunion_id, utilisateur=request.user)
+
+    reunion = get_object_or_404(Reunion, pk=reunion_id)
+    if not _can_view_meeting(reunion, request.user):
+        return HttpResponseForbidden("Accès interdit.")
 
     text = (request.POST.get("text") or "").strip()
     summary = (request.POST.get("summary") or "").strip()
@@ -758,11 +826,11 @@ def save_transcription(request, reunion_id: int):
         return JsonResponse({"ok": False, "error": "Texte vide"}, status=400)
 
     # upsert Transcription
-    tr, _created = Transcription.objects.get_or_create(
+    tr, created = Transcription.objects.get_or_create(
         reunion=reunion,
         defaults={"text_transcrit": text, "langue": lang, "heure_date": timezone.now()},
     )
-    if not _created:
+    if not created:
         tr.text_transcrit = text
         tr.langue = lang
         tr.heure_date = timezone.now()
@@ -770,56 +838,32 @@ def save_transcription(request, reunion_id: int):
 
     # upsert Resume (si summary fourni)
     if summary:
-        rs, _c2 = Resume.objects.get_or_create(
+        rs, c2 = Resume.objects.get_or_create(
             transcription=tr, defaults={"text_resume": summary}
         )
-        if not _c2:
+        if not c2:
             rs.text_resume = summary
             rs.save()
 
-    # si tu veux marquer la réunion comme "terminée" après sauvegarde
+    # Marquer la réunion comme "terminer" après sauvegarde (optionnel)
     if reunion.status != "terminer":
         reunion.status = "terminer"
         reunion.save(update_fields=["status"])
 
     return JsonResponse({"ok": True, "transcription_id": tr.id})
-from docx import Document
-from docx.shared import Pt, Inches
-from tempfile import NamedTemporaryFile
-import os
 
-# ------- Rapport (DOCX) -------
-# meetings/views.py
-import os
-from tempfile import NamedTemporaryFile
 
-from django.conf import settings
-from django.contrib import messages
-from django.contrib.auth.decorators import login_required
-from django.core.files import File
-from django.http import FileResponse, HttpResponseForbidden, JsonResponse
-from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
-from django.utils import timezone
-
-from docx import Document
-from docx.shared import Inches
-
-from .models import Reunion, Transcription, Resume, Rapport
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
-
-def _can_view(reunion, user):
-    return (
-        reunion.utilisateur_id == user.id
-        or reunion.participants.filter(id=user.id).exists()
-        or user.is_superuser
-    )
+# =============================================================================
+# Rapport (DOCX) (utilisateur uniquement)
+# =============================================================================
 @login_required
 def meeting_report_view(request, pk):
+    """Aperçu d’un rapport (utilisateur uniquement)."""
+    if forbid_admin_on_meetings(request):
+        return HttpResponseForbidden("Accès refusé.")
+
     r = get_object_or_404(Reunion.objects.select_related("utilisateur"), pk=pk)
-    if not _can_view(r, request.user):
+    if not _can_view_meeting(r, request.user):
         return HttpResponseForbidden("Accès refusé.")
 
     transcription = getattr(r, "transcription", None)
@@ -828,8 +872,7 @@ def meeting_report_view(request, pk):
     total_seconds = sum(getattr(a, "duree", 0) for a in audios)
     total_hours = round(total_seconds / 3600, 2)
 
-    # Si tu as un modèle Decision, remplace par ta vraie requête
-    decisions = getattr(r, "decisions", None)
+    decisions = getattr(r, "decisions", None)  # si vous avez un modèle Decision
 
     ctx = {
         "reunion": r,
@@ -843,29 +886,33 @@ def meeting_report_view(request, pk):
         "generate_url": reverse("generate_report", args=[r.id]),
     }
     return render(request, "HTML/meeting_report.html", ctx)
+
+
 @login_required
 def generate_report(request, reunion_id: int):
     """
     Génère un DOCX avec infos réunion + résumé + transcription.
     Nécessite: pip install python-docx
     """
-    r = get_object_or_404(Reunion.objects.select_related("utilisateur"), pk=reunion_id)
+    if forbid_admin_on_meetings(request):
+        return HttpResponseForbidden("Accès refusé.")
 
-    if not _can_view(r, request.user):
+    r = get_object_or_404(Reunion.objects.select_related("utilisateur"), pk=reunion_id)
+    if not _can_view_meeting(r, request.user):
         return HttpResponseForbidden("Accès refusé.")
 
     tr = getattr(r, "transcription", None)
     if not tr or not (tr.text_transcrit or "").strip():
         messages.error(request, "Aucune transcription enregistrée pour cette réunion.")
-        return redirect("transcription", r.id)  # adapte le nom d'URL si besoin
+        return redirect("transcription", r.id)
 
     rs = getattr(tr, "resume", None)
     if not rs:
-        # ⚠️ Important: créer le résumé AVANT de créer le rapport
+        # Crée un résumé minimal si absent (OneToOne avec Rapport)
         rs = Resume.objects.create(
             transcription=tr,
             text_resume="(Résumé non fourni — à compléter)",
-            langue=getattr(tr, "langue", "fr") or "fr",
+            langue=(getattr(tr, "langue", "fr") or "fr"),
         )
 
     # ------- DOCX -------
@@ -895,11 +942,10 @@ def generate_report(request, reunion_id: int):
     doc.add_heading("Résumé", level=2)
     doc.add_paragraph(rs.text_resume or "(non disponible)")
 
-    # Décisions (si tu as un modèle et des données)
+    # Décisions (si vous avez de la donnée)
     decisions = getattr(r, "decisions", None)
     if decisions:
         doc.add_heading("Décisions", level=2)
-        # adapte selon ta structure
         for d in decisions.all() if hasattr(decisions, "all") else decisions:
             doc.add_paragraph(f"• {getattr(d, 'titre', str(d))}", style="List Bullet")
 
@@ -913,11 +959,10 @@ def generate_report(request, reunion_id: int):
         tmp.flush()
         tmp_path = tmp.name
 
-    # Attache au Rapport (OneToOne avec Resume)
     rapport, _ = Rapport.objects.get_or_create(resume=rs)
     filename = f"rapport_reunion_{r.id}_{timezone.now().strftime('%Y%m%d_%H%M')}.docx"
     with open(tmp_path, "rb") as f:
-        rapport.fichier.save(filename, File(f), save=True)
+        rapport.fichier.save(filename, f, save=True)
 
     os.remove(tmp_path)
 

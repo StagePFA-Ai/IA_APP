@@ -9,24 +9,41 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
 
   <style>
-    body{background:#f5f5f7;min-height:100vh;display:flex}
-    .sidebar{width:260px;background:#1f2a37;color:#fff;display:flex;flex-direction:column;padding:20px}
-    .sidebar .brand{font-weight:700;font-size:1.3rem;margin-bottom:6px}
+    :root{
+      --brand-bg:#1f2a37;
+      --brand-accent:#2563eb;
+      --ink-300:#6b7280;
+      --ink-600:#374151;
+      --panel-bg:#ffffff;
+      --page-bg:#f5f5f7;
+      --shadow:0 2px 10px rgba(0,0,0,.06);
+    }
+    body{background:var(--page-bg);min-height:100vh;display:flex}
+    /* Sidebar (même style que dashboard) */
+    .sidebar{width:260px;background:var(--brand-bg);color:#fff;display:flex;flex-direction:column;padding:20px}
+    .sidebar .brand{font-weight:700;font-size:1.25rem;margin-bottom:.25rem}
     .sidebar .muted{opacity:.75;font-size:.9rem;margin-bottom:22px}
     .sidebar a{color:#e5e7eb;text-decoration:none;padding:10px 12px;border-radius:8px;display:block;margin-bottom:6px}
-    .sidebar a.active,.sidebar a:hover{background:#2563eb;color:#fff}
+    .sidebar a.active,.sidebar a:hover{background:var(--brand-accent);color:#fff}
+
+    /* Main */
     .main{flex:1;display:flex;flex-direction:column}
-    .topbar{background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+    .topbar{background:#fff;box-shadow:var(--shadow);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
     .content{padding:22px}
-    .cardx{border:0;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
-    .pane{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
-    .pane h5{margin:0 0 8px 0}
-    .log{white-space:pre-wrap;min-height:140px;max-height:360px;overflow:auto;border-radius:10px;border:1px solid #eee;padding:12px;background:#fafafa}
-    .bigbtn{min-width:180px}
+    .pane{background:var(--panel-bg);border-radius:12px;box-shadow:var(--shadow)}
+    .pane h5{margin:0 0 10px 0}
+    .log{white-space:pre-wrap;min-height:160px;max-height:420px;overflow:auto;border-radius:10px;border:1px solid #eee;padding:12px;background:#fafafa}
     .pill{padding:.25rem .6rem;border-radius:999px;font-size:.8rem}
     .pill-live{background:#fee2e2;color:#991b1b}
     .pill-idle{background:#e5e7eb;color:#374151}
     .counter{font-variant:tabular-nums}
+    .section-title{font-weight:600;margin-bottom:6px;color:var(--ink-600)}
+    .hint{color:var(--ink-300);font-size:.875rem}
+    .toolbar{display:flex;gap:.5rem;flex-wrap:wrap}
+    .toolbar .btn{min-width:160px}
+    @media (max-width: 992px){
+      .sidebar{display:none}
+    }
   </style>
 </head>
 <body>
@@ -40,7 +57,6 @@
       <a href="{% url 'meetings' %}">Réunions</a>
       <a href="{% url 'calendar' %}">Calendrier</a>
       <a href="{% url 'settings' %}">Paramètres</a>
-      
     </nav>
     <div class="mt-auto small text-white-50">© {% now "Y" %} Local</div>
   </aside>
@@ -56,7 +72,8 @@
       </div>
       <div class="d-flex align-items-center gap-2">
         <a class="btn btn-outline-primary btn-sm" href="{% url 'view_meeting' reunion.id %}">Détails</a>
-        <a class="btn btn-outline-dark btn-sm" href="javascript:history.back()">Retour</a>
+        <a class="btn btn-outline-dark btn-sm" href="{% url 'generate_report' reunion.id %}">Générer le rapport</a>
+        <a class="btn btn-primary btn-sm" href="{% url 'meeting_report_view' reunion.id %}"> Aperçu rapport</a>
       </div>
     </header>
 
@@ -70,40 +87,47 @@
       {% endif %}
 
       <div class="row g-3">
-        <!-- Panneau contrôle -->
+        <!-- 1) Contrôle -->
         <div class="col-12 col-lg-4">
           <div class="pane p-3">
-            <h5>Contrôle</h5>
-            <div class="d-flex align-items-center justify-content-between">
+            <h5>Capture & Contrôle</h5>
+
+            <div class="d-flex align-items-center justify-content-between mb-2">
               <span id="badgeState" class="pill pill-idle">Au repos</span>
               <span class="text-muted small">Durée : <span id="timer" class="counter">00:00</span></span>
             </div>
 
-            <div class="mt-3 d-grid gap-2">
-              <button id="btnToggle" class="btn btn-primary bigbtn">🎤 Démarrer</button>
-              <div class="d-flex gap-2">
-                <select id="lang" class="form-select">
-                  <option value="fr" selected>Français</option>
-                  <option value="en">English</option>
-                  <option value="ar">العربية</option>
-                </select>
-                <input id="maxMins" type="number" class="form-control" placeholder="Durée max (min)" min="1">
-              </div>
-              <div class="d-grid gap-2">
-                <button id="btnSumm" class="btn btn-outline-primary" disabled>📝 Résumer</button>
-                <button id="btnSave" class="btn btn-outline-dark" disabled>💾 Enregistrer</button>
-                <button id="btnClear" class="btn btn-light">Effacer l’affichage</button>
-              </div>
-              <div id="info" class="text-muted small"></div>
+            <div class="section-title">Paramètres</div>
+            <div class="d-flex gap-2">
+              <select id="lang" class="form-select">
+                <option value="fr" selected>Français</option>
+                <option value="en">English</option>
+                <option value="ar">العربية</option>
+              </select>
+              <input id="maxMins" type="number" class="form-control" placeholder="Durée max (min)" min="1">
+            </div>
+
+            <div class="section-title mt-3">Actions</div>
+            <div class="toolbar">
+              <button id="btnToggle" class="btn btn-primary"> Démarrer la capture</button>
+              <button id="btnSave" class="btn btn-outline-dark" disabled> Enregistrer</button>
+              <button id="btnClear" class="btn btn-light"> Effacer l’affichage</button>
+            </div>
+
+            <div id="info" class="hint mt-2"></div>
+            <hr class="my-3">
+            <div class="hint">
+              
+              
             </div>
           </div>
         </div>
 
-        <!-- Panneau transcription -->
+        <!-- 2) Transcription live -->
         <div class="col-12 col-lg-4">
           <div class="pane p-3">
             <div class="d-flex align-items-center justify-content-between">
-              <h5>Transcription (live)</h5>
+              <h5>Transcription (temps réel)</h5>
               <span class="text-muted small">{{ reunion.get_status_display }}</span>
             </div>
             <div id="transcription" class="log">
@@ -114,26 +138,26 @@
           </div>
         </div>
 
-        <!-- Panneau résumé -->
+        <!-- 3) Résumé -->
         <div class="col-12 col-lg-4">
-          <div class="pane p-3">
-            <h5>Résumé</h5>
-            <div id="summary" class="log">
+          <div class="pane p-3 d-flex flex-column" style="height:100%">
+            <h5>Résumé de la réunion</h5>
+            <div id="summary" class="log flex-grow-1">
               {% if resume %}
                 {{ resume.text_resume }}
               {% endif %}
+            </div>
+            <!-- Bouton placé SOUS la zone de résumé -->
+            <div class="d-grid gap-2 mt-2">
+              <button id="btnSumm" class="btn btn-outline-primary" disabled> Produire / Mettre à jour le résumé</button>
+            </div>
+            <div class="hint mt-2">
+              
             </div>
           </div>
         </div>
       </div>
     </main>
-    <a class="btn btn-outline-dark btn-sm" href="{% url 'generate_report' reunion.id %}">
-  📄 Générer le rapport
-  </a>
-  <a class="btn btn-outline-primary btn-sm" href="{% url 'meeting_report_view' reunion.id %}">
-  👀 Aperçu rapport
-</a>
-
   </div>
 
   <script>
@@ -143,7 +167,6 @@
       const parts = value.split(`; ${name}=`);
       if (parts.length === 2) return parts.pop().split(';').shift();
     }
-
     function fmtTime(sec) {
       const m = Math.floor(sec / 60).toString().padStart(2, '0');
       const s = Math.floor(sec % 60).toString().padStart(2, '0');
@@ -166,17 +189,16 @@
     // ---------- état ----------
     let ws = null;
     let stream = null;
-    let rec = null;
+    let audioCtx = null;
+    let source   = null;
+    let processor = null;
     let running = false;
     let t0 = 0;
     let tick = null;
     let autoStopTimer = null;
-    let accumulatedText = [];  // pour sauver à la fin
-    let audioCtx = null;
-    let source   = null;
-    let processor = null; 
+    let accumulatedText = [];
 
-    const WS_URL = "{{ webrtc_ws_url|default:'/ws/transcription/' }}"; // défini dans ta vue
+    const WS_URL = "{{ webrtc_ws_url|default:'/ws/transcription/' }}";
 
     function setState(on) {
       running = on;
@@ -184,122 +206,132 @@
         badge.textContent = "Enregistrement…";
         badge.classList.remove('pill-idle');
         badge.classList.add('pill-live');
-        btnToggle.textContent = "⏹️ Arrêter";
-        btnSumm.disabled = true; // on ne résume qu'après stop
+        btnToggle.textContent = " Arrêter la capture";
+        btnSumm.disabled = true;   // résumé dispo après arrêt
         btnSave.disabled = true;
       } else {
         badge.textContent = "Au repos";
         badge.classList.remove('pill-live');
         badge.classList.add('pill-idle');
-        btnToggle.textContent = "🎤 Démarrer";
-        btnSumm.disabled = false; // autorise le résumé
-        btnSave.disabled = false; // autorise la sauvegarde
+        btnToggle.textContent = "Démarrer la capture";
+        btnSumm.disabled = false;
+        btnSave.disabled = false;
       }
     }
-
-    function logInfo(s) {
-      infoEl.textContent = s || "";
-    }
-
+    function logInfo(s) { infoEl.textContent = s || ""; }
     function appendTrans(line) {
       if (!line) return;
       accumulatedText.push(line);
       transDiv.textContent += (transDiv.textContent ? "\n" : "") + "🗣️ " + line;
       transDiv.scrollTop = transDiv.scrollHeight;
     }
-
     function setSummary(text) {
       sumDiv.textContent = text || "";
       sumDiv.scrollTop = sumDiv.scrollHeight;
     }
 
-    
-async function start() {
-  try {
-    // 1) WebSocket
-    if (!ws || ws.readyState === WebSocket.CLOSED) {
-      ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + WS_URL);
-      ws.binaryType = "arraybuffer";
-      ws.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.type === "transcription") appendTrans(data.message);
-          else if (data.type === "summary")   setSummary(data.message);
-          else if (data.type === "info")      transDiv.textContent += (transDiv.textContent ? "\n" : "") + data.message;
-        } catch(_) {}
-      };
-      await new Promise(res => ws.onopen = res);
+    // Downsample Float32 @inRate -> Float32 @16kHz
+    function downsampleTo16k(float32Buffer, inSampleRate) {
+      if (inSampleRate === 16000) return new Float32Array(float32Buffer);
+      const ratio = inSampleRate / 16000;
+      const outLen = Math.round(float32Buffer.length / ratio);
+      const out = new Float32Array(outLen);
+      let inPos = 0;
+      for (let i = 0; i < outLen; i++) {
+        const nextInPos = Math.round((i + 1) * ratio);
+        let sum = 0, count = 0;
+        for (; inPos < nextInPos && inPos < float32Buffer.length; inPos++) {
+          sum += float32Buffer[inPos];
+          count++;
+        }
+        out[i] = count ? (sum / count) : 0;
+      }
+      return out;
     }
 
-    // 2) Micro
-    stream = await navigator.mediaDevices.getUserMedia({
-     audio: {
-    channelCount: 1,
-    echoCancellation: false,   // ← OFF
-    noiseSuppression: false,   // ← OFF
-    autoGainControl: true      // ← ON
-   }
-    });
+    async function start() {
+      try {
+        // 1) WebSocket
+        if (!ws || ws.readyState === WebSocket.CLOSED) {
+          ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + WS_URL);
+          ws.binaryType = "arraybuffer";
+          ws.onmessage = (e) => {
+            try {
+              const data = JSON.parse(e.data);
+              if (data.type === "transcription") appendTrans(data.message);
+              else if (data.type === "summary")   setSummary(data.message);
+              else if (data.type === "info")      transDiv.textContent += (transDiv.textContent ? "\n" : "") + data.message;
+            } catch(_) {}
+          };
+          await new Promise(res => ws.onopen = res);
+        }
 
-    // 3) WebAudio → Float32 PCM (downsample 16 kHz) → WebSocket (binary)
-    audioCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    source    = audioCtx.createMediaStreamSource(stream);
-    processor = audioCtx.createScriptProcessor(4096, 1, 1);
-    processor.onaudioprocess = (ev) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const input = ev.inputBuffer.getChannelData(0);          // Float32 @ audioCtx.sampleRate (≈48 kHz)
-      const pcm16 = downsampleTo16k(input, audioCtx.sampleRate); // Float32 @ 16 kHz
-      ws.send(pcm16.buffer);                                     // envoi binaire
-    };
-    source.connect(processor);
-    processor.connect(audioCtx.destination);
+        // 2) Micro
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: true
+          }
+        });
 
-    // 4) action start + UI
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ action: "start", lang: (langSel.value || "fr") }));
+        // 3) WebAudio → Float32 16 kHz → WS
+        audioCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+        source    = audioCtx.createMediaStreamSource(stream);
+        processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        processor.onaudioprocess = (ev) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const input = ev.inputBuffer.getChannelData(0);             // Float32 @ ~48k
+          const pcm16k = downsampleTo16k(input, audioCtx.sampleRate); // Float32 @ 16k
+          ws.send(pcm16k.buffer);                                     // binaire (ArrayBuffer)
+        };
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+
+        // 4) action start
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: "start", lang: (langSel.value || "fr") }));
+        }
+
+        // 5) UI
+        transDiv.textContent += (transDiv.textContent ? "\n" : "") + " Transcription démarrée…";
+        t0 = Date.now();
+        timerEl.textContent = "00:00";
+        clearInterval(tick);
+        tick = setInterval(() => {
+          const sec = (Date.now() - t0) / 1000;
+          timerEl.textContent = fmtTime(sec);
+        }, 250);
+
+        clearTimeout(autoStopTimer);
+        const mins = parseInt(maxMins.value || "0", 10);
+        if (mins > 0) autoStopTimer = setTimeout(stop, mins * 60 * 1000);
+
+        setState(true);
+        logInfo("");
+
+      } catch (err) {
+        logInfo("Erreur micro/WebSocket : " + (err?.message || err));
+        setState(false);
+      }
     }
 
-    transDiv.textContent += (transDiv.textContent ? "\n" : "") + "🎤 Transcription démarrée…";
-    t0 = Date.now();
-    timerEl.textContent = "00:00";
-    clearInterval(tick);
-    tick = setInterval(() => {
-      const sec = (Date.now() - t0) / 1000;
-      timerEl.textContent = fmtTime(sec);
-    }, 250);
+    function stop() {
+      try { processor && processor.disconnect(); } catch(_) {}
+      try { source && source.disconnect(); } catch(_) {}
+      try { audioCtx && audioCtx.close(); } catch(_) {}
+      try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(_) {}
+      try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ action: "stop" })); } catch(_) {}
 
-    // Auto-stop si durée max définie
-    clearTimeout(autoStopTimer);
-    const mins = parseInt(maxMins.value || "0", 10);
-    if (mins > 0) autoStopTimer = setTimeout(stop, mins * 60 * 1000);
-
-    setState(true);
-    logInfo("");
-
-  } catch (err) {
-    logInfo("Erreur micro/WebSocket : " + (err?.message || err));
-    setState(false);
-  }
-}
-
-
-
-   function stop() {
-  try { processor && processor.disconnect(); } catch(_) {}
-  try { source && source.disconnect(); } catch(_) {}
-  try { audioCtx && audioCtx.close(); } catch(_) {}
-  try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(_) {}
-  try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ action: "stop" })); } catch(_) {}
-
-  clearInterval(tick);
-  clearTimeout(autoStopTimer);
-  setState(false);
-  transDiv.textContent += (transDiv.textContent ? "\n" : "") + "⏹️ Transcription arrêtée.";
-}
+      clearInterval(tick);
+      clearTimeout(autoStopTimer);
+      setState(false);
+      transDiv.textContent += (transDiv.textContent ? "\n" : "") + "⏹️ Transcription arrêtée.";
+    }
 
     function toggle() {
-      if (running) stop();
-      else start();
+      if (running) stop(); else start();
     }
 
     async function summarize() {
@@ -328,12 +360,10 @@ async function start() {
           body: fd
         });
         const data = await resp.json();
-        if (!resp.ok || !data.ok) {
-          throw new Error(data.error || "Erreur de sauvegarde.");
-        }
-        logInfo("✅ Transcription enregistrée.");
+        if (!resp.ok || !data.ok) throw new Error(data.error || "Erreur de sauvegarde.");
+        logInfo(" Transcription enregistrée.");
       } catch (e) {
-        logInfo("❌ " + (e?.message || e));
+        logInfo(" " + (e?.message || e));
       }
     }
 
@@ -355,27 +385,7 @@ async function start() {
     btnSave  .addEventListener('click', saveAll);
     btnClear .addEventListener('click', clearDisplay);
 
-    // Si le socket se ferme pendant l'enreg., on remet l'UI à l'arrêt
-    window.addEventListener('beforeunload', () => {
-      try { if (running) stop(); } catch(_){}
-    });
-    function downsampleTo16k(float32Buffer, inSampleRate) {
-  if (inSampleRate === 16000) return new Float32Array(float32Buffer);
-  const ratio = inSampleRate / 16000;
-  const outLen = Math.round(float32Buffer.length / ratio);
-  const out = new Float32Array(outLen);
-  let inPos = 0;
-  for (let i = 0; i < outLen; i++) {
-    const nextInPos = Math.round((i + 1) * ratio);
-    let sum = 0, count = 0;
-    for (; inPos < nextInPos && inPos < float32Buffer.length; inPos++) {
-      sum += float32Buffer[inPos];
-      count++;
-    }
-    out[i] = count ? (sum / count) : 0;
-  }
-  return out;
-}
+    window.addEventListener('beforeunload', () => { try { if (running) stop(); } catch(_){} });
   </script>
 </body>
 </html>
