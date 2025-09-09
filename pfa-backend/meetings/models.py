@@ -25,7 +25,7 @@ class ReunionStatus(models.TextChoices):
     ANNULER   = "annuler",   "Annulé"
     REPORTER  = "reporter",  "Reporté"
 
-
+### ENIMS PYTON 
 class Lang(models.TextChoices):
     """Langues supportées pour transcription/résumé."""
     FR = "fr", "Français"
